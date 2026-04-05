@@ -52,11 +52,41 @@ figma.ui.onmessage = async (msg) => {
         globalImports.add("import 'package:flutter_svg/flutter_svg.dart';");
         globalImports.add("import 'package:google_fonts/google_fonts.dart';");
 
-        let mainFiles = nodeASTs.map(ast => {
+        // 2. Pre-calculate paths for all screens to handle collisions and flattening
+        const screenConfigs = nodeASTs.map(ast => {
+            const cleanName = ast.name.toLowerCase().replace(/[^a-z0-9\/]/g, '_').replace(/^\/+|\/+$/g, '');
+            // Strip lib/, screen/, screens/, page/, pages/ from the start
+            const strippedName = cleanName.replace(/^(lib|screen|screens|page|pages)\//i, '');
+            return { ast, cleanName, strippedName };
+        });
+
+        const strippedCounts: Record<string, number> = {};
+        screenConfigs.forEach(cfg => {
+            strippedCounts[cfg.strippedName] = (strippedCounts[cfg.strippedName] || 0) + 1;
+        });
+
+        const finalScreenMetadata = screenConfigs.map(cfg => {
+            let fileName = cfg.strippedName;
+            // Collision handling: if "main" exists twice, use underscored name for the prefixed one
+            if (strippedCounts[cfg.strippedName] > 1 && cfg.cleanName !== cfg.strippedName) {
+                fileName = cfg.cleanName.replace(/\//g, '_');
+            }
+            const finalPath = `lib/screen/${fileName}.dart`;
+            const className = toPascalCase(cfg.ast.name) + 'Screen';
+            const routePath = cfg.cleanName; 
+            return { ...cfg, fileName, finalPath, className, routePath };
+        });
+
+        const mainFiles = finalScreenMetadata.map(meta => {
+            const { ast, finalPath, className, fileName } = meta;
             const currentScreenImports = new Set<string>();
             currentScreenImports.add("import 'package:flutter/material.dart';");
             currentScreenImports.add("import 'package:flutter_svg/flutter_svg.dart';");
             currentScreenImports.add("import 'package:google_fonts/google_fonts.dart';");
+
+            const frameWidth = ast.properties.width || 1440;
+            const frameHeight = ast.properties.height || 1024;
+            const screenSize = { width: frameWidth, height: frameHeight };
 
             let inputNodes: any[] = [];
             let listNodes: any[] = [];
@@ -87,7 +117,6 @@ figma.ui.onmessage = async (msg) => {
             let bottomNavAST = null;
 
             if (mainBodyAST.children) {
-                // Cari AppBar dan BottomNav di level pertama (Direct children of Frame Utama)
                 const appBarIndex = mainBodyAST.children.findIndex((c: any) => c.widget === 'AppBar');
                 if (appBarIndex !== -1) {
                     appBarAST = mainBodyAST.children.splice(appBarIndex, 1)[0];
@@ -98,38 +127,26 @@ figma.ui.onmessage = async (msg) => {
                 }
             }
 
-            let appBarCode = appBarAST ? generateFlutterCode(appBarAST, 3, logicNodes, logicEdges) : '';
+            let appBarCode = appBarAST ? generateFlutterCode(appBarAST, 3, logicNodes, logicEdges, screenSize) : '';
             if (appBarCode) {
-                // Wrap in PreferredSize for custom AppBars from Figma
                 appBarCode = `      appBar: PreferredSize(\n        preferredSize: const Size.fromHeight(60.0),\n        child: ${appBarCode.trim()},\n      ),`;
             }
 
-            let bottomNavCode = bottomNavAST ? generateFlutterCode(bottomNavAST, 3, logicNodes, logicEdges) : '';
+            let bottomNavCode = bottomNavAST ? generateFlutterCode(bottomNavAST, 3, logicNodes, logicEdges, screenSize) : '';
             if (bottomNavCode) {
                 bottomNavCode = `      bottomNavigationBar: ${bottomNavCode.trim()},`;
             }
 
-            let widgetTreeCode = generateFlutterCode(mainBodyAST, 3, logicNodes, logicEdges);
+            let widgetTreeCode = generateFlutterCode(mainBodyAST, 3, logicNodes, logicEdges, screenSize);
 
-            let cleanPath = ast.name.toLowerCase().replace(/[^a-z0-9\/]/g, '_');
-            cleanPath = cleanPath.replace(/^\/+|\/+$/g, ''); 
-            
-            let finalPath = `lib/${cleanPath}.dart`;
-
-            let className = toPascalCase(ast.name) + 'Screen';
             registeredClassNames.add(className);
 
-            const frameWidth = ast.properties.width || 1440;
-            const frameHeight = ast.properties.height || 1024;
             const shouldScroll = ast.name.toLowerCase().includes('scroll');
             const isOverlay = ast.name.toLowerCase().includes('overlay');
 
             let effectiveFrameHeight = frameHeight;
             if (appBarAST) effectiveFrameHeight -= 60;
             if (bottomNavAST) effectiveFrameHeight -= 60;
-
-            const mainDesignWidth = nodeASTs[0].properties.width || 1440;
-            const mainDesignHeight = nodeASTs[0].properties.height || 1024;
 
             let bodyWidget = widgetTreeCode.trim();
             if (shouldScroll) {
@@ -147,24 +164,13 @@ figma.ui.onmessage = async (msg) => {
           ),
         )`;
             } else if (isOverlay) {
-                // 🪄 UNIVERSAL PROPORTION ENGINE (V5.1):
-                // Menggunakan bingkai virtual seukuran desain utama (1440px)
-                // agar overlay ikut mengecil secara proporsional.
-                bodyWidget = `Center(
-          child: FittedBox(
-            alignment: Alignment.center,
-            fit: BoxFit.contain, 
-            child: SizedBox(
-              width: ${mainDesignWidth},
-              height: ${mainDesignHeight},
-              child: Center(
-                child: SizedBox(
-                  width: ${frameWidth},
-                  height: ${effectiveFrameHeight},
-                  child: ${bodyWidget},
-                ),
-              ),
-            ),
+                bodyWidget = `FittedBox(
+          alignment: Alignment.center,
+          fit: BoxFit.scaleDown,
+          child: SizedBox(
+            width: ${frameWidth},
+            height: ${effectiveFrameHeight},
+            child: ${bodyWidget}
           ),
         )`;
             } else {
@@ -184,7 +190,6 @@ figma.ui.onmessage = async (msg) => {
             let rawBg = (ast.properties.backgroundColor || '').replace('#', '');
             let scaffoldBg = rawBg ? `const Color(0xFF${rawBg})` : 'Colors.white';
 
-            // 🧩 DEPENDENCY ENGINE (V4.26)
             const findDependencies = (node: any, deps: Set<string>) => {
               if (node.properties && node.properties.figmaNavigations) {
                 node.properties.figmaNavigations.forEach((r: any) => {
@@ -201,10 +206,12 @@ figma.ui.onmessage = async (msg) => {
             
             dependencies.forEach(dest => {
               if (dest !== ast.name) {
-                const cleanDest = dest.toLowerCase().replace(/[^a-z0-9\/]/g, '_').replace(/^\/+|\/+$/g, '');
-                const importPath = `import 'package:${projectName}/${cleanDest}.dart';`;
-                globalImports.add(importPath);
-                currentScreenImports.add(importPath);
+                const depMeta = finalScreenMetadata.find(m => m.ast.name === dest);
+                if (depMeta) {
+                    const importPath = `import 'package:${projectName}/screen/${depMeta.fileName}.dart';`;
+                    globalImports.add(importPath);
+                    currentScreenImports.add(importPath);
+                }
               }
             });
 
@@ -256,23 +263,27 @@ ${buildMethodContent}
             };
         });
 
-        const finalImports = Array.from(globalImports).join('\n');
+        // 3. Generate modular main.dart imports
+        const modularMainImports = new Set<string>();
+        modularMainImports.add("import 'dart:io';");
+        modularMainImports.add("import 'package:flutter/material.dart';");
+        modularMainImports.add("import 'package:flutter_svg/flutter_svg.dart';");
+        modularMainImports.add("import 'package:google_fonts/google_fonts.dart';");
+        modularMainImports.add("import 'package:window_manager/window_manager.dart';");
 
-        // 3. Generate main.dart routes map
-        mainFiles
-            .filter(f => f.path !== 'lib/main.dart')
-            .forEach(f => {
-                globalImports.add(`import 'package:${projectName}/${f.path.replace('lib/', '').replace('.dart', '')}.dart';`);
-            });
+        mainFiles.forEach(f => {
+            if (f.path !== 'lib/main.dart') {
+                modularMainImports.add(`import 'package:${projectName}/${f.path.replace('lib/', '').replace('.dart', '')}.dart';`);
+            }
+        });
 
-        const routeMapEntries = nodeASTs.map((ast, index) => {
-            const className = toPascalCase(ast.name) + 'Screen';
-            
-            // Cek apakah class ini ada dalam bundle saat ini (Anti-Bug: Linkage Check)
+        const finalModularImports = Array.from(modularMainImports).join('\n');
+
+
+        const routeMapEntries = finalScreenMetadata.map((meta) => {
+            const { ast, className, routePath } = meta;
             if (!registeredClassNames.has(className)) return null;
-
-            const cleanPath = ast.name.toLowerCase().replace(/[^a-z0-9\/]/g, '_').replace(/^\/+|\/+$/g, '');
-            return `        '/${cleanPath}': (context) => const ${className}(),`;
+            return `        '/${routePath}': (context) => const ${className}(),`;
         }).filter(r => r !== null).join('\n');
 
         // 🎨 MASTER MODE: Hanya sertakan import inti (Material, Svg, Fonts)
@@ -284,7 +295,7 @@ ${buildMethodContent}
         masterOnlyImports.add("import 'package:google_fonts/google_fonts.dart';");
         masterOnlyImports.add("import 'package:window_manager/window_manager.dart';");
 
-        const initialRoutePath = mainFiles[0].path.replace('lib/', '').replace('.dart', '');
+        const initialRoutePath = finalScreenMetadata[0].routePath;
         const fWidth = nodeASTs[0].properties.width || 1440;
         const fHeight = nodeASTs[0].properties.height || 1024;
 
@@ -348,12 +359,12 @@ ${routeMapEntries}
 }
 `;
 
-        // 🧠 MASTER COPY (V4.44 Zero-Mistake Assembly): 
-        // Menggabungkan SEMUA (Import Inti + main() + Semua Class) ke dalam tab utama.
-        // Urutan: TOP IMPORTS -> MAIN/MYAPP -> ALL SCREEN CLASSES.
         const masterImportsHeader = Array.from(masterOnlyImports).join('\n');
         const allScreensContent = screenClassSnippets.join('\n\n');
         const dartCodeOutput = masterImportsHeader + '\n' + mainDartContent + '\n' + allScreensContent;
+        
+        // 🧩 MODULAR ENTRY POINT (V4.5): main.dart yang bersih hanya dengan import + setup
+        const modularMainDartContent = finalModularImports + '\n' + mainDartContent;
 
         // 4. pubspec.yaml & Assets (V4.11)
         let binaryAssets: { name: string, data: Uint8Array }[] = [];
@@ -403,18 +414,34 @@ dev_dependencies:
 flutter:
   uses-material-design: true${assetsEntry}`;
 
-        // 5. Unified main.dart Packaging (V4.11)
+        // 5. Unified allcode.dart (For Debugging & Sharing)
+        const allCodeContent = `/* 
+  🚀 FIGMA TO FLUTTER V4 - ALL-IN-ONE DEBUG FILE
+  Copy and send this file to Antigravity for debugging!
+*/
+
+// ==========================================
+// 📄 PUBSPEC.YAML
+// ==========================================
+/*
+${pubspecContent}
+*/
+
+// ==========================================
+// 🎯 ALL DART CODE (Entry + Screens)
+// ==========================================
+${dartCodeOutput}`;
+
+        // 6. Unified main.dart Packaging (V4.11)
         let finalFiles: { path: string, content: string }[] = [];
+        finalFiles.push({ path: 'allcode.dart', content: allCodeContent });
         finalFiles.push({ path: '[Boilerplate] pubspec.yaml', content: pubspecContent });
-        finalFiles.push({ path: 'lib/main.dart', content: dartCodeOutput });
+        finalFiles.push({ path: 'lib/main.dart', content: modularMainDartContent });
 
         // Tambahkan file screen lainnya ke dalam daftar (Filter lib/main.dart agar tidak dobel)
         mainFiles.forEach(f => {
             if (f.path !== 'lib/main.dart') {
-                finalFiles.push({
-                  path: f.path,
-                  content: finalImports + '\n\n' + f.content.substring(f.content.indexOf('class '))
-                });
+                finalFiles.push(f);
             }
         });
 

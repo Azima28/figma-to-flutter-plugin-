@@ -51,11 +51,19 @@ export async function parseNode(node: SceneNode): Promise<any> {
                     cleanDestName = cleanDestName.replace(/^\/+|\/+$/g, '');
 
                     if (!cleanDestName.includes('/')) cleanDestName = `export/${cleanDestName}`;
-                    let isOverlay = r.action.navigation === 'OVERLAY';
-                    let overlayPos = (r.action as any).overlayPositionType || 'CENTER';
-                    let overlayOffset = (r.action as any).overlayRelativeOffset || { x: 0, y: 0 };
-                    // Default Close When Clicking Outside is usually true in Figma but we follow the property
-                    let closeOutside = (r.action as any).overlayBackgroundInteraction === 'CLOSE_ON_CLICK_OUTSIDE';
+                    let action = r.action as any;
+                    let isOverlay = action.navigation === 'OVERLAY';
+                    // Deteksi posisi dengan berbagai kemungkinan nama properti API Figma
+                    let overlayPos = action.overlayPositionType || action.overlayPosition || (action.overlayRelativePosition ? 'MANUAL' : 'CENTER');
+                    let overlayOffset = { x: 0, y: 0 };
+                    if (action.overlayRelativePosition) {
+                        overlayOffset = { x: action.overlayRelativePosition.x ?? 0, y: action.overlayRelativePosition.y ?? 0 };
+                    } else if (action.overlayRelativeOffset) {
+                        overlayOffset = { x: action.overlayRelativeOffset.x ?? 0, y: action.overlayRelativeOffset.y ?? 0 };
+                    } else if (action.overlayOffset) {
+                        overlayOffset = { x: action.overlayOffset.x ?? 0, y: action.overlayOffset.y ?? 0 };
+                    }
+                    let closeOutside = action.overlayBackgroundInteraction === 'CLOSE_ON_CLICK_OUTSIDE';
 
                     navDestinations.push({
                         dest: cleanDestName,

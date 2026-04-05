@@ -1,5 +1,10 @@
 import { toPascalCase } from './utils';
 
+export interface ScreenSize {
+    width: number;
+    height: number;
+}
+
 export function buildActionComments(triggerNodeId: string, logicNodes: any[], logicEdges: any[], indent: string): string {
     let lines: string[] = [];
     let outgoing = logicEdges.filter((e: any) => e.source === triggerNodeId);
@@ -24,8 +29,8 @@ export function buildActionComments(triggerNodeId: string, logicNodes: any[], lo
     return lines.join('\n');
 }
 
-export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = []): string {
-    let coreCode = generateWidgetCore(ast, indentLevel, logicNodes, logicEdges);
+export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = [], screenSize?: ScreenSize): string {
+    let coreCode = generateWidgetCore(ast, indentLevel, logicNodes, logicEdges, screenSize);
 
     let isBtnPrefix = (ast.name || '').toLowerCase().startsWith('>btn_');
     let triggerName = isBtnPrefix ? ast.name.substring(5) : ast.name;
@@ -56,21 +61,27 @@ export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: a
                     const closeOutside = nav.closeOutside !== false;
 
                     let alignment = 'Alignment.center';
-                    if (posType === 'TOP_CENTER' || posType === 'TOP') alignment = 'Alignment.topCenter';
-                    else if (posType === 'BOTTOM_CENTER' || posType === 'BOTTOM') alignment = 'Alignment.bottomCenter';
-                    else if (posType === 'TOP_LEFT') alignment = 'Alignment.topLeft';
-                    else if (posType === 'TOP_RIGHT') alignment = 'Alignment.topRight';
-                    else if (posType === 'BOTTOM_LEFT') alignment = 'Alignment.bottomLeft';
-                    else if (posType === 'BOTTOM_RIGHT') alignment = 'Alignment.bottomRight';
-                    else if (posType === 'CENTER' || posType === "CENTERED") alignment = 'Alignment.center';
+                    const mappedPos = posType.toUpperCase();
+                    if (mappedPos.includes('TOP_CENTER') || mappedPos === 'TOP') alignment = 'Alignment.topCenter';
+                    else if (mappedPos.includes('BOTTOM_CENTER') || mappedPos === 'BOTTOM') alignment = 'Alignment.bottomCenter';
+                    else if (mappedPos.includes('TOP_LEFT')) alignment = 'Alignment.topLeft';
+                    else if (mappedPos.includes('TOP_RIGHT')) alignment = 'Alignment.topRight';
+                    else if (mappedPos.includes('BOTTOM_LEFT')) alignment = 'Alignment.bottomLeft';
+                    else if (mappedPos.includes('BOTTOM_RIGHT')) alignment = 'Alignment.bottomRight';
+                    else if (mappedPos.includes('LEFT_CENTER')) alignment = 'Alignment.centerLeft';
+                    else if (mappedPos.includes('RIGHT_CENTER')) alignment = 'Alignment.centerRight';
+                    else if (mappedPos.includes('CENTER')) alignment = 'Alignment.center';
 
-                    let overlayChild = `${destClassName}()`;
-                    if (posType === 'MANUAL') {
-                        overlayChild = `Stack(\n${nextIndent}        children: [\n${nextIndent}          Positioned(\n${nextIndent}            left: ${offset.x},\n${nextIndent}            top: ${offset.y},\n${nextIndent}            child: ${destClassName}(),\n${nextIndent}          ),\n${nextIndent}        ],\n${nextIndent}      )`;
-                        alignment = 'Alignment.topLeft';
+                    const isManual = posType.toUpperCase().includes('MANUAL') || offset.x !== 0 || offset.y !== 0;
+                    let innerContent = '';
+
+                    if (isManual) {
+                        innerContent = `Stack(\n${nextIndent}            fit: StackFit.expand,\n${nextIndent}            children: [\n${nextIndent}              Positioned(\n${nextIndent}                left: ${offset.x},\n${nextIndent}                top: ${offset.y},\n${nextIndent}                child: Material(color: Colors.transparent, child: const ${destClassName}()),\n${nextIndent}              ),\n${nextIndent}            ],\n${nextIndent}          )`;
+                    } else {
+                        innerContent = `Align(\n${nextIndent}            alignment: ${alignment},\n${nextIndent}            child: Material(color: Colors.transparent, child: const ${destClassName}()),\n${nextIndent}          )`;
                     }
 
-                    nativeNavCode += `${nextIndent}  showGeneralDialog(\n${nextIndent}    context: context,\n${nextIndent}    barrierDismissible: ${closeOutside},\n${nextIndent}    barrierLabel: '',\n${nextIndent}    barrierColor: Colors.black54,\n${nextIndent}    pageBuilder: (context, anim1, anim2) => Align(\n${nextIndent}      alignment: ${alignment},\n${nextIndent}      child: Material(color: Colors.transparent, child: ${overlayChild}),\n${nextIndent}    ),\n${nextIndent}  );\n`;
+                    nativeNavCode += `${nextIndent}  showGeneralDialog(\n${nextIndent}    context: context,\n${nextIndent}    barrierDismissible: ${closeOutside},\n${nextIndent}    barrierLabel: '',\n${nextIndent}    barrierColor: Colors.black54,\n${nextIndent}    pageBuilder: (context, anim1, anim2) => Center(\n${nextIndent}      child: FittedBox(\n${nextIndent}        fit: BoxFit.contain,\n${nextIndent}        child: SizedBox(\n${nextIndent}          width: ${screenSize?.width ?? 1440},\n${nextIndent}          height: ${screenSize?.height ?? 1024},\n${nextIndent}          child: ${innerContent},\n${nextIndent}        ),\n${nextIndent}      ),\n${nextIndent}    ),\n${nextIndent}  );\n`;
                 } else {
                     nativeNavCode += `${nextIndent}  Navigator.pushNamed(context, '/${dest}');\n`;
                 }
@@ -94,7 +105,7 @@ ${indent})`;
     return coreCode;
 }
 
-export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = []): string {
+export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = [], screenSize?: ScreenSize): string {
     const indent = '  '.repeat(indentLevel);
     const nextIndent = '  '.repeat(indentLevel + 1);
 
@@ -142,7 +153,7 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
 
             if (ast.name && ast.name.toLowerCase().startsWith('>list_')) {
                 const templateChild = ast.children[0];
-                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges);
+                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges, screenSize);
                 const listName = ast.name.replace('>list_', '');
                 
                 return `${indent}SizedBox(\n${nextIndent}height: ${ast.properties.height || 200},\n${nextIndent}child: ListView.builder(\n${nextIndent}  itemCount: _${listName}Data.length,\n${nextIndent}  itemBuilder: (context, index) {\n${nextIndent}    // TODO (Backend): Bind data dari _${listName}Data[index] di sini\n${nextIndent}    return ${itemCode.trim()};\n${nextIndent}  },\n${nextIndent}),\n${indent})`;
@@ -150,19 +161,19 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
 
             if (ast.name && ast.name.toLowerCase().startsWith('>grid_')) {
                 const templateChild = ast.children[0];
-                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges);
+                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges, screenSize);
                 const gridName = ast.name.replace('>grid_', '');
                 
                 return `${indent}SizedBox(\n${nextIndent}height: ${ast.properties.height || 400},\n${nextIndent}child: GridView.builder(\n${nextIndent}  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(\n${nextIndent}    crossAxisCount: 2,\n${nextIndent}    childAspectRatio: 1.0,\n${nextIndent}    crossAxisSpacing: 10,\n${nextIndent}    mainAxisSpacing: 10,\n${nextIndent}  ),\n${nextIndent}  itemCount: _${gridName}Data.length,\n${nextIndent}  itemBuilder: (context, index) {\n${nextIndent}    // TODO (Backend): Bind data dari _${gridName}Data[index] di sini\n${nextIndent}    return ${itemCode.trim()};\n${nextIndent}  },\n${nextIndent}),\n${indent})`;
             }
 
             if (ast.widget === 'Container' && ast.children.length === 1) {
-                let childContent = generateFlutterCode(ast.children[0], indentLevel + 1, logicNodes, logicEdges);
+                let childContent = generateFlutterCode(ast.children[0], indentLevel + 1, logicNodes, logicEdges, screenSize);
                 containerProps.push(`child: ${childContent.trim()}`);
             } else {
                 let childrenArr: string[] = [];
                 ast.children.forEach((c: any, index: number) => {
-                    let childCode = generateFlutterCode(c, indentLevel + 2, logicNodes, logicEdges);
+                    let childCode = generateFlutterCode(c, indentLevel + 2, logicNodes, logicEdges, screenSize);
                     
                     if (c.properties.layoutGrow === 1) {
                         childCode = `${nextIndent}Expanded(\n${nextIndent}  child: ${childCode.trim()},\n${nextIndent})`;
