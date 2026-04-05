@@ -51,19 +51,26 @@ export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: a
 
                 if (isOverlay) {
                     let destClassName = toPascalCase(originalName) + 'Screen';
-                    let posType = nav.overlayPosition || 'CENTER';
-                    
+                    const posType = nav.overlayPosition || 'CENTER';
+                    const offset = nav.overlayOffset || { x: 0, y: 0 };
+                    const closeOutside = nav.closeOutside !== false;
+
                     let alignment = 'Alignment.center';
-                    if (posType === 'TOP_CENTER') alignment = 'Alignment.topCenter';
-                    else if (posType === 'BOTTOM_CENTER') alignment = 'Alignment.bottomCenter';
+                    if (posType === 'TOP_CENTER' || posType === 'TOP') alignment = 'Alignment.topCenter';
+                    else if (posType === 'BOTTOM_CENTER' || posType === 'BOTTOM') alignment = 'Alignment.bottomCenter';
                     else if (posType === 'TOP_LEFT') alignment = 'Alignment.topLeft';
                     else if (posType === 'TOP_RIGHT') alignment = 'Alignment.topRight';
                     else if (posType === 'BOTTOM_LEFT') alignment = 'Alignment.bottomLeft';
                     else if (posType === 'BOTTOM_RIGHT') alignment = 'Alignment.bottomRight';
-                    else if (posType === 'LEFT_CENTER') alignment = 'Alignment.centerLeft';
-                    else if (posType === 'RIGHT_CENTER') alignment = 'Alignment.centerRight';
+                    else if (posType === 'CENTER' || posType === "CENTERED") alignment = 'Alignment.center';
 
-                    nativeNavCode += `${nextIndent}  showGeneralDialog(\n${nextIndent}    context: context,\n${nextIndent}    barrierDismissible: true,\n${nextIndent}    barrierLabel: '',\n${nextIndent}    barrierColor: Colors.black54,\n${nextIndent}    pageBuilder: (context, anim1, anim2) => Align(\n${nextIndent}      alignment: ${alignment},\n${nextIndent}      child: Material(color: Colors.transparent, child: ${destClassName}()),\n${nextIndent}    ),\n${nextIndent}  );\n`;
+                    let overlayChild = `${destClassName}()`;
+                    if (posType === 'MANUAL') {
+                        overlayChild = `Stack(\n${nextIndent}        children: [\n${nextIndent}          Positioned(\n${nextIndent}            left: ${offset.x},\n${nextIndent}            top: ${offset.y},\n${nextIndent}            child: ${destClassName}(),\n${nextIndent}          ),\n${nextIndent}        ],\n${nextIndent}      )`;
+                        alignment = 'Alignment.topLeft';
+                    }
+
+                    nativeNavCode += `${nextIndent}  showGeneralDialog(\n${nextIndent}    context: context,\n${nextIndent}    barrierDismissible: ${closeOutside},\n${nextIndent}    barrierLabel: '',\n${nextIndent}    barrierColor: Colors.black54,\n${nextIndent}    pageBuilder: (context, anim1, anim2) => Align(\n${nextIndent}      alignment: ${alignment},\n${nextIndent}      child: Material(color: Colors.transparent, child: ${overlayChild}),\n${nextIndent}    ),\n${nextIndent}  );\n`;
                 } else {
                     nativeNavCode += `${nextIndent}  Navigator.pushNamed(context, '/${dest}');\n`;
                 }

@@ -53,12 +53,17 @@ export async function parseNode(node: SceneNode): Promise<any> {
                     if (!cleanDestName.includes('/')) cleanDestName = `export/${cleanDestName}`;
                     let isOverlay = r.action.navigation === 'OVERLAY';
                     let overlayPos = (r.action as any).overlayPositionType || 'CENTER';
+                    let overlayOffset = (r.action as any).overlayRelativeOffset || { x: 0, y: 0 };
+                    // Default Close When Clicking Outside is usually true in Figma but we follow the property
+                    let closeOutside = (r.action as any).overlayBackgroundInteraction === 'CLOSE_ON_CLICK_OUTSIDE';
 
                     navDestinations.push({
                         dest: cleanDestName,
                         originalName: destNode.name,
                         isOverlay: isOverlay,
-                        overlayPosition: overlayPos
+                        overlayPosition: overlayPos,
+                        overlayOffset: overlayOffset,
+                        closeOutside: closeOutside
                     });
                 }
             }
