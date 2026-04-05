@@ -128,6 +128,9 @@ figma.ui.onmessage = async (msg) => {
             if (appBarAST) effectiveFrameHeight -= 60;
             if (bottomNavAST) effectiveFrameHeight -= 60;
 
+            const mainDesignWidth = nodeASTs[0].properties.width || 1440;
+            const mainDesignHeight = nodeASTs[0].properties.height || 1024;
+
             let bodyWidget = widgetTreeCode.trim();
             if (shouldScroll) {
                 bodyWidget = `SingleChildScrollView(
@@ -143,11 +146,32 @@ figma.ui.onmessage = async (msg) => {
             ),
           ),
         )`;
+            } else if (isOverlay) {
+                // 🪄 UNIVERSAL PROPORTION ENGINE (V5.1):
+                // Menggunakan bingkai virtual seukuran desain utama (1440px)
+                // agar overlay ikut mengecil secara proporsional.
+                bodyWidget = `Center(
+          child: FittedBox(
+            alignment: Alignment.center,
+            fit: BoxFit.contain, 
+            child: SizedBox(
+              width: ${mainDesignWidth},
+              height: ${mainDesignHeight},
+              child: Center(
+                child: SizedBox(
+                  width: ${frameWidth},
+                  height: ${effectiveFrameHeight},
+                  child: ${bodyWidget},
+                ),
+              ),
+            ),
+          ),
+        )`;
             } else {
                 bodyWidget = `Center(
           child: FittedBox(
             alignment: Alignment.center,
-            fit: ${isOverlay ? 'BoxFit.scaleDown' : 'BoxFit.contain'}, // 🪄 LIQUID: Seimbangkan kaku vs fleksibel
+            fit: BoxFit.contain,
             child: SizedBox(
               width: ${frameWidth},
               height: ${effectiveFrameHeight},
