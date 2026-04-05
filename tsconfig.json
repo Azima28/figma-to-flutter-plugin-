@@ -1,0 +1,22 @@
+{
+    "compilerOptions": {
+        "target": "es6",
+        "jsx": "react",
+        "lib": [
+            "es6",
+            "dom"
+        ],
+        "strict": true,
+        "moduleResolution": "node",
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "typeRoots": [
+            "./node_modules/@types",
+            "./node_modules/@figma"
+        ]
+    },
+    "include": [
+        "src/**/*"
+    ]
+}

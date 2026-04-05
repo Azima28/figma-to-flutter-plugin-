@@ -1,0 +1,16 @@
+{
+    "name": "Flutter V4 Ecosystem",
+    "id": "123456789",
+    "api": "1.0.0",
+    "main": "dist/code.js",
+    "ui": "dist/ui.html",
+    "editorType": [
+        "figma"
+    ],
+    "networkAccess": {
+        "allowedDomains": [
+            "*"
+        ],
+        "reasoning": "Dibutuhkan untuk melakukan sinkronisasi Bi-Directional dengan repository code eksternal dan API LLM."
+    }
+}

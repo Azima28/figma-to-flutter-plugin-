@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Figma-to-Flutter V4 | Master Skeleton Guide</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-glow: rgba(99, 102, 241, 0.5);
+            --bg: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --text-main: #f8fafc;
+            --text-dim: #94a3b8;
+            --accent: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 80px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 80px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #fff 0%, #6366f1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            color: var(--text-dim);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            margin-top: 50px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            padding: 30px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card:hover {
+            transform: translateY(-10px);
+            border-color: var(--primary);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 0 0 20px var(--primary-glow);
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--primary);
+        }
+
+        .prefix {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(99, 102, 241, 0.2);
+            color: #818cf8;
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+
+        h3 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            color: #fff;
+        }
+
+        p {
+            color: var(--text-dim);
+            font-size: 0.95rem;
+        }
+
+        .section-title {
+            margin-top: 100px;
+            margin-bottom: 40px;
+            text-align: center;
+        }
+
+        .section-title h2 {
+            font-size: 2rem;
+            position: relative;
+            display: inline-block;
+        }
+
+        .section-title h2::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 4px;
+            background: var(--primary);
+            border-radius: 2px;
+        }
+
+        .pro-tip {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            padding: 20px;
+            border-radius: 16px;
+            margin-top: 40px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .pro-tip strong {
+            color: var(--accent);
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 100px;
+            color: var(--text-dim);
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <p class="subtitle">Manual Penggunaan Plugin</p>
+            <h1>Master Skeleton V4</h1>
+            <p>Ubah desain Figma menjadi kodingan Flutter profesional dalam satu klik.</p>
+        </header>
+
+        <div class="section-title">
+            <h2>Kamus Prefix (Naming Rules)</h2>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="prefix">>btn_nama_tombol</div>
+                <h3>Tombol Interaktif</h3>
+                <p>Mengubah layer menjadi <strong>GestureDetector</strong>. Otomatis menghasilkan boilerplate fungsi onTap dan komentar TODO backend.</p>
+            </div>
+
+            <div class="card">
+                <div class="prefix">>input_nama_field</div>
+                <h3>Formulir Input</h3>
+                <p>Menghasilkan <strong>TextFormField</strong> lengkap dengan <strong>TextEditingController</strong> yang terkelola otomatis di State.</p>
+            </div>
+
+            <div class="card">
+                <div class="prefix">>list_nama_daftar</div>
+                <h3>Daftar Dinamis (List)</h3>
+                <p>Mendeteksi pola berulang dan menghasilkan <strong>ListView.builder</strong> beserta Mock Data Array untuk testing cepat.</p>
+            </div>
+
+            <div class="card">
+                <div class="prefix">>grid_nama_kategori</div>
+                <h3>Tata Letak Grid</h3>
+                <p>Serupa dengan List, namun menghasilkan <strong>GridView.builder</strong> yang responsif untuk tampilan produk atau galeri.</p>
+            </div>
+
+            <div class="card">
+                <div class="prefix">>appbar_title</div>
+                <h3>Header Aplikasi</h3>
+                <p>Memisahkan layer secara cerdas dan memasukkannya ke properti <strong>Scaffold.appBar</strong> agar struktur kode sangat bersih.</p>
+            </div>
+
+            <div class="card">
+                <div class="prefix">>bottom_nav_bar</div>
+                <h3>Navigasi Bawah</h3>
+                <p>Menempatkan layer di properti <strong>bottomNavigationBar</strong>. Tetap terlihat di posisi bawah meskipun halaman di-scroll.</p>
+            </div>
+        </div>
+
+        <div class="section-title">
+            <h2>Fitur Cerdas Otomatis</h2>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>Auto Assets</h3>
+                <p>Semua gambar biner (PNG/JPG) di-export otomatis ke folder assets dan terintegrasi di pubspec.yaml.</p>
+            </div>
+            <div class="card">
+                <h3>Prototype Mapping</h3>
+                <p>Koneksi antar halaman di Figma (Prototype Mode) otomatis dikonversi menjadi Navigator.pushNamed.</p>
+            </div>
+            <div class="card">
+                <h3>Global Theming</h3>
+                <p>Local Styles (Colors) di Figma menjadi class AppColors di Flutter. Ubah di satu tempat, terupdate di semua halaman.</p>
+            </div>
+        </div>
+
+        <div class="pro-tip">
+            <span>🚀</span>
+            <div>
+                <strong>Pro Tip:</strong> Gunakan fitur <strong>Auto Layout</strong> di Figma. Plugin ini akan membacanya sebagai Row, Column, atau Expanded yang benar-benar responsif!
+            </div>
+        </div>
+
+        <footer>
+            &copy; 2026 Figma-to-Flutter Ecosystem V4 | Build production-ready skeletons in seconds.
+        </footer>
+    </div>
+</body>
+</html>
