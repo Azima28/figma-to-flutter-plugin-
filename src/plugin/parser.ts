@@ -1,7 +1,11 @@
 import { extractFills } from './utils';
 
-export async function parseNode(node: SceneNode): Promise<any> {
+export async function parseNode(node: SceneNode, parentX = 0, parentY = 0): Promise<any> {
     const nodeNameLower = node.name.toLowerCase();
+
+    // 🌐 Cumulative Coordinate Logic: Calculate exact position in screen space
+    const currentX = parentX + (('x' in node) ? node.x : 0);
+    const currentY = parentY + (('y' in node) ? node.y : 0);
 
     // Fitur Rahasia (Animasi Smart Shortcut)
     if (nodeNameLower.includes('loading') || nodeNameLower.includes('spinner') || nodeNameLower.includes('anim')) {
@@ -11,8 +15,8 @@ export async function parseNode(node: SceneNode): Promise<any> {
             properties: {
                 width: node.width,
                 height: node.height,
-                x: node.x,
-                y: node.y,
+                x: ('x' in node) ? node.x : 0,
+                y: ('y' in node) ? node.y : 0,
             }
         };
     }
@@ -20,7 +24,7 @@ export async function parseNode(node: SceneNode): Promise<any> {
     let astNode: any = null;
 
     if (node.type === 'FRAME' || node.type === 'COMPONENT' || node.type === 'INSTANCE' || node.type === 'GROUP') {
-        astNode = await parseFrameShape(node as any);
+        astNode = await parseFrameShape(node as any, parentX, parentY);
     } else if (node.type === 'TEXT') {
         astNode = parseTextShape(node);
     } else if (node.type === 'RECTANGLE') {
@@ -43,36 +47,74 @@ export async function parseNode(node: SceneNode): Promise<any> {
 
     if ('reactions' in node) {
         let navDestinations: any[] = [];
-        for (let r of node.reactions) {
-            if (r.trigger?.type === 'ON_CLICK' && r.action?.type === 'NODE' && r.action.destinationId) {
-                let destNode = figma.getNodeById(r.action.destinationId);
-                if (destNode) {
-                    let cleanDestName = destNode.name.toLowerCase().replace(/[^a-z0-9\/]/g, '_');
-                    cleanDestName = cleanDestName.replace(/^\/+|\/+$/g, '');
+        // COLLECT REACTIONS (Deep Inheritance)
+        let allReactions = [...(node.reactions || [])];
+        if (node.type === 'INSTANCE' && node.mainComponent) {
+            allReactions = [...allReactions, ...(node.mainComponent.reactions || [])];
+        }
 
-                    if (!cleanDestName.includes('/')) cleanDestName = `export/${cleanDestName}`;
-                    let action = r.action as any;
-                    let isOverlay = action.navigation === 'OVERLAY';
-                    // Deteksi posisi dengan berbagai kemungkinan nama properti API Figma
-                    let overlayPos = action.overlayPositionType || action.overlayPosition || (action.overlayRelativePosition ? 'MANUAL' : 'CENTER');
-                    let overlayOffset = { x: 0, y: 0 };
-                    if (action.overlayRelativePosition) {
-                        overlayOffset = { x: action.overlayRelativePosition.x ?? 0, y: action.overlayRelativePosition.y ?? 0 };
-                    } else if (action.overlayRelativeOffset) {
-                        overlayOffset = { x: action.overlayRelativeOffset.x ?? 0, y: action.overlayRelativeOffset.y ?? 0 };
-                    } else if (action.overlayOffset) {
-                        overlayOffset = { x: action.overlayOffset.x ?? 0, y: action.overlayOffset.y ?? 0 };
+        for (let r of allReactions) {
+            if (r.trigger?.type !== 'ON_CLICK') continue;
+
+            const actions = r.actions || (r.action ? [r.action] : []);
+
+            for (const action of actions) {
+                if (action.type === 'NODE' && action.destinationId) {
+                    let destNode = figma.getNodeById(action.destinationId);
+                    if (destNode) {
+                        let cleanDestName = destNode.name.toLowerCase().replace(/[^a-z0-9\/]/g, '_');
+                        cleanDestName = cleanDestName.replace(/^\/+|\/+$/g, '');
+                        if (!cleanDestName.includes('/')) cleanDestName = `export/${cleanDestName}`;
+
+                        const actionAny = action as any;
+                        const isOverlay = actionAny.navigation === 'OVERLAY';
+                        const overlayPos = actionAny.overlayPositionType || actionAny.overlayPosition || (actionAny.overlayRelativePosition ? 'MANUAL' : 'CENTER');
+                        
+                        let overlayOffset = { x: 0, y: 0 };
+                        if (actionAny.overlayRelativePosition) {
+                            overlayOffset = { x: actionAny.overlayRelativePosition.x ?? 0, y: actionAny.overlayRelativePosition.y ?? 0 };
+                        } else if (actionAny.overlayRelativeOffset) {
+                            overlayOffset = { x: actionAny.overlayRelativeOffset.x ?? 0, y: actionAny.overlayRelativeOffset.y ?? 0 };
+                        }
+
+                        // UNIVERSAL FINDER: Cari di Tombol, Parent, dan FRAME TUJUAN
+                        function findPropRecursive(obj: any, key: string): any {
+                            if (!obj || typeof obj !== 'object') return undefined;
+                            if (key in obj) return obj[key];
+                            for (let k in obj) {
+                                let res = findPropRecursive(obj[k], key);
+                                if (res !== undefined) return res;
+                            }
+                            return undefined;
+                        }
+
+                        const rawReactionStr = JSON.stringify(r);
+                        const rawDestStr = JSON.stringify(destNode); // Cek juga di Frame tujuan
+                        
+                        const interaction = findPropRecursive(r, 'overlayBackgroundInteraction') || findPropRecursive(destNode, 'overlayBackgroundInteraction');
+                        
+                        // PREMIUM DEFAULT LOGIC:
+                        // Jika jenisnya OVERLAY, kita default-kan ke TRUE (Close Outside & Background) 
+                        // kecuali memang eksplisit terekstrak sebagai "NONE" atau false.
+                        let closeOutside = isOverlay; // Default true if overlay
+                        if (rawReactionStr.includes('CLOSE_ON_CLICK_OUTSIDE') || rawDestStr.includes('CLOSE_ON_CLICK_OUTSIDE')) closeOutside = true;
+                        
+                        let hasBackground = isOverlay; // Default true if overlay
+                        if (rawReactionStr.includes('\"type\":\"SOLID\"') || rawDestStr.includes('\"type\":\"SOLID\"')) hasBackground = true;
+                        if (rawReactionStr.includes('\"overlayBackground\":{\"type\":\"NONE\"}')) hasBackground = false;
+
+                        navDestinations.push({
+                            dest: cleanDestName,
+                            originalName: destNode.name,
+                            isOverlay: isOverlay,
+                            overlayPosition: overlayPos,
+                            overlayOffset: overlayOffset,
+                            closeOutside: closeOutside,
+                            hasBackground: hasBackground,
+                            triggerX: currentX, 
+                            triggerY: currentY
+                        });
                     }
-                    let closeOutside = action.overlayBackgroundInteraction === 'CLOSE_ON_CLICK_OUTSIDE';
-
-                    navDestinations.push({
-                        dest: cleanDestName,
-                        originalName: destNode.name,
-                        isOverlay: isOverlay,
-                        overlayPosition: overlayPos,
-                        overlayOffset: overlayOffset,
-                        closeOutside: closeOutside
-                    });
                 }
             }
         }
@@ -113,12 +155,16 @@ export async function parseVectorShape(node: any): Promise<any> {
     };
 }
 
-export async function parseFrameShape(node: any): Promise<any> {
+export async function parseFrameShape(node: any, parentX = 0, parentY = 0): Promise<any> {
     let flutterWidget = 'Container';
     let children = [];
 
+    const currentX = parentX + (node.x || 0);
+    const currentY = parentY + (node.y || 0);
+
     if ('children' in node) {
-        children = await Promise.all(node.children.map((c: SceneNode) => parseNode(c)));
+        // PERBAIKAN V4.10: Inject parent coordinates into children for recursive solver
+        children = await Promise.all(node.children.map((c: SceneNode) => parseNode(c, currentX, currentY)));
         
         // PERBAIKAN V4.9: Normalisasi Koordinat Group (Figma Group Paradox Fix)
         // Groups di Figma tidak mendefinisikan coordinate system baru untuk anaknya.

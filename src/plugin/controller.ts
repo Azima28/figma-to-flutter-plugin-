@@ -23,7 +23,7 @@ figma.ui.onmessage = async (msg) => {
 
         figma.notify(`Parsing ${selection.length} node(s) to Flutter AST...`);
 
-        const nodeASTs = await Promise.all(selection.map(node => parseNode(node)));
+        const nodeASTs = await Promise.all(selection.map(node => parseNode(node, -(node as any).x || 0, -(node as any).y || 0)));
 
         let logicNodes = msg.logicNodes || [];
         let logicEdges = msg.logicEdges || [];

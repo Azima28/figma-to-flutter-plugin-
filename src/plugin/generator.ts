@@ -58,7 +58,8 @@ export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: a
                     let destClassName = toPascalCase(originalName) + 'Screen';
                     const posType = nav.overlayPosition || 'CENTER';
                     const offset = nav.overlayOffset || { x: 0, y: 0 };
-                    const closeOutside = nav.closeOutside !== false;
+                    const closeOutside = nav.closeOutside === true;
+                    const hasBackground = nav.hasBackground === true;
 
                     let alignment = 'Alignment.center';
                     const mappedPos = posType.toUpperCase();
@@ -76,12 +77,14 @@ export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: a
                     let innerContent = '';
 
                     if (isManual) {
-                        innerContent = `Stack(\n${nextIndent}            fit: StackFit.expand,\n${nextIndent}            children: [\n${nextIndent}              Positioned(\n${nextIndent}                left: ${offset.x},\n${nextIndent}                top: ${offset.y},\n${nextIndent}                child: Material(color: Colors.transparent, child: const ${destClassName}()),\n${nextIndent}              ),\n${nextIndent}            ],\n${nextIndent}          )`;
+                        const finalX = (nav.triggerX || 0) + offset.x;
+                        const finalY = (nav.triggerY || 0) + offset.y;
+                        innerContent = `Stack(\n${nextIndent}            fit: StackFit.expand,\n${nextIndent}            children: [\n${nextIndent}              Positioned(\n${nextIndent}                left: ${finalX},\n${nextIndent}                top: ${finalY},\n${nextIndent}                child: Material(color: Colors.transparent, child: const ${destClassName}()),\n${nextIndent}              ),\n${nextIndent}            ],\n${nextIndent}          )`;
                     } else {
                         innerContent = `Align(\n${nextIndent}            alignment: ${alignment},\n${nextIndent}            child: Material(color: Colors.transparent, child: const ${destClassName}()),\n${nextIndent}          )`;
                     }
 
-                    nativeNavCode += `${nextIndent}  showGeneralDialog(\n${nextIndent}    context: context,\n${nextIndent}    barrierDismissible: ${closeOutside},\n${nextIndent}    barrierLabel: '',\n${nextIndent}    barrierColor: Colors.black54,\n${nextIndent}    pageBuilder: (context, anim1, anim2) => Center(\n${nextIndent}      child: FittedBox(\n${nextIndent}        fit: BoxFit.contain,\n${nextIndent}        child: SizedBox(\n${nextIndent}          width: ${screenSize?.width ?? 1440},\n${nextIndent}          height: ${screenSize?.height ?? 1024},\n${nextIndent}          child: ${innerContent},\n${nextIndent}        ),\n${nextIndent}      ),\n${nextIndent}    ),\n${nextIndent}  );\n`;
+                    nativeNavCode += `${nextIndent}  showGeneralDialog(\n${nextIndent}    context: context,\n${nextIndent}    barrierDismissible: true,\n${nextIndent}    barrierLabel: 'Dismiss',\n${nextIndent}    barrierColor: ${hasBackground ? 'Colors.black54' : 'Colors.transparent'},\n${nextIndent}    pageBuilder: (context, anim1, anim2) => PopScope(\n${nextIndent}      canPop: true,\n${nextIndent}      child: GestureDetector(\n${nextIndent}        behavior: HitTestBehavior.opaque,\n${nextIndent}        onTap: () { if (${closeOutside}) Navigator.pop(context); },\n${nextIndent}        child: Material(\n${nextIndent}          color: Colors.transparent,\n${nextIndent}          child: Center(\n${nextIndent}            child: FittedBox(\n${nextIndent}              fit: BoxFit.contain,\n${nextIndent}              child: SizedBox(\n${nextIndent}                width: ${screenSize?.width ?? 1440},\n${nextIndent}                height: ${screenSize?.height ?? 1024},\n${nextIndent}                child: Stack(\n${nextIndent}                  fit: StackFit.expand,\n${nextIndent}                  children: [\n${nextIndent}                    Positioned(\n${nextIndent}                      left: ${isManual ? ((nav.triggerX || 0) + offset.x) : 0},\n${nextIndent}                      top: ${isManual ? ((nav.triggerY || 0) + offset.y) : 0},\n${nextIndent}                      child: GestureDetector(\n${nextIndent}                        behavior: HitTestBehavior.opaque,\n${nextIndent}                        onTap: () {}, // Stop propagation to background\n${nextIndent}                        child: const ${destClassName}(),\n${nextIndent}                      ),\n${nextIndent}                    ),\n${nextIndent}                  ],\n${nextIndent}                ),\n${nextIndent}              ),\n${nextIndent}            ),\n${nextIndent}          ),\n${nextIndent}        ),\n${nextIndent}      ),\n${nextIndent}    ),\n${nextIndent}  );\n`;
                 } else {
                     nativeNavCode += `${nextIndent}  Navigator.pushNamed(context, '/${dest}');\n`;
                 }
