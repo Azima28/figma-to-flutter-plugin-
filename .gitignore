@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+.pub-cache/
+.pub/
+.dart_tool/
+build/
+bin/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+*.DS_Store
+
+# Compilation Output
+dist/
+*.exe
+*.dll
+
+# Platform Specific (Generated)
+android/
+ios/
+web/
+windows/
+linux/
+macos/
+
+# Sensitive
+.env
+secret.json
