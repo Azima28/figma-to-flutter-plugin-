@@ -122,6 +122,7 @@ figma.ui.onmessage = async (msg) => {
             const frameWidth = ast.properties.width || 1440;
             const frameHeight = ast.properties.height || 1024;
             const shouldScroll = ast.name.toLowerCase().includes('scroll');
+            const isOverlay = ast.name.toLowerCase().includes('overlay');
 
             let effectiveFrameHeight = frameHeight;
             if (appBarAST) effectiveFrameHeight -= 60;
@@ -146,7 +147,7 @@ figma.ui.onmessage = async (msg) => {
                 bodyWidget = `Center(
           child: FittedBox(
             alignment: Alignment.center,
-            fit: BoxFit.contain, // 🪄 LIQUID: Selalu pas dan proporsional
+            fit: ${isOverlay ? 'BoxFit.scaleDown' : 'BoxFit.contain'}, // 🪄 LIQUID: Seimbangkan kaku vs fleksibel
             child: SizedBox(
               width: ${frameWidth},
               height: ${effectiveFrameHeight},
