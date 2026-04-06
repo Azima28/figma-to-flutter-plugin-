@@ -30,6 +30,31 @@ export function buildActionComments(triggerNodeId: string, logicNodes: any[], lo
 }
 
 export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = [], screenSize?: ScreenSize): string {
+    // 🧩 MODULARITY V4.12: Shared Component Call Logic
+    if (ast.isInstance && ast.mainComponentId) {
+        const className = toPascalCase(ast.mainComponentName);
+        const indent = '  '.repeat(indentLevel);
+        const nextIndent = '  '.repeat(indentLevel + 1);
+
+        let overridesCode = '';
+        if (ast.overrides) {
+            const textValue = Object.values(ast.overrides)[0] as string;
+            if (textValue) {
+                overridesCode = `\n${nextIndent}text: "${textValue.replace(/"/g, '\\"')}",`;
+            }
+        }
+
+        const isBtn = (ast.name || '').toLowerCase().startsWith('>btn_');
+        const triggerName = isBtn ? ast.name.substring(5) : ast.name;
+        const matchingTrigger = logicNodes.find((ln: any) => ln.data.label === triggerName && ln.data.typeLabel === 'Batas: Tombol/Klik');
+        const triggerId = matchingTrigger ? matchingTrigger.id : '';
+        const actionComments = triggerId ? buildActionComments(triggerId, logicNodes, logicEdges, nextIndent + '  ') : '';
+
+        let onTapCode = `\n${nextIndent}onTap: () {\n${nextIndent}  // 🎯 Layer: ${ast.name}${actionComments ? '\n' + actionComments : ''}\n${nextIndent}},`;
+
+        return `${indent}${className}(${overridesCode}${onTapCode}\n${indent})`;
+    }
+
     let coreCode = generateWidgetCore(ast, indentLevel, logicNodes, logicEdges, screenSize);
 
     let isBtnPrefix = (ast.name || '').toLowerCase().startsWith('>btn_');
@@ -190,21 +215,32 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
                         let wrappedChild = childCode.trim();
 
                         // 🌐 Horizontal Liquid Positioning
-                        if (hConst === 'MIN') positionProps.push(`left: ${c.properties.x}`);
-                        else if (hConst === 'MAX') positionProps.push(`right: ${ast.properties.width - (c.properties.x + c.properties.width)}`);
+                        if (hConst === 'MIN') {
+                            positionProps.push(`left: ${c.properties.x}`);
+                            if (c.properties.width) positionProps.push(`width: ${Math.round(c.properties.width)}`);
+                        }
+                        else if (hConst === 'MAX') {
+                            positionProps.push(`right: ${ast.properties.width - (c.properties.x + c.properties.width)}`);
+                            if (c.properties.width) positionProps.push(`width: ${Math.round(c.properties.width)}`);
+                        }
                         else if (hConst === 'STRETCH') {
                           positionProps.push(`left: ${c.properties.x}`);
                           positionProps.push(`right: ${ast.properties.width - (c.properties.x + c.properties.width)}`);
                         } else if (hConst === 'CENTER') {
-                          // Untuk Center di Stack, kita butuh fill agar Center() tahu batasnya
                           positionProps.push(`left: 0`);
                           positionProps.push(`right: 0`);
                           wrappedChild = `Center(child: ${wrappedChild})`;
                         }
 
                         // 🌐 Vertical Liquid Positioning
-                        if (vConst === 'MIN') positionProps.push(`top: ${c.properties.y}`);
-                        else if (vConst === 'MAX') positionProps.push(`bottom: ${ast.properties.height - (c.properties.y + c.properties.height)}`);
+                        if (vConst === 'MIN') {
+                            positionProps.push(`top: ${c.properties.y}`);
+                            if (c.properties.height && c.properties.height > 2) positionProps.push(`height: ${Math.round(c.properties.height)}`);
+                        }
+                        else if (vConst === 'MAX') {
+                            positionProps.push(`bottom: ${ast.properties.height - (c.properties.y + c.properties.height)}`);
+                            if (c.properties.height && c.properties.height > 2) positionProps.push(`height: ${Math.round(c.properties.height)}`);
+                        }
                         else if (vConst === 'STRETCH') {
                           positionProps.push(`top: ${c.properties.y}`);
                           positionProps.push(`bottom: ${ast.properties.height - (c.properties.y + c.properties.height)}`);
@@ -282,16 +318,43 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
         if (ast.properties.textAutoResize !== 'WIDTH_AND_HEIGHT' && ast.properties.width) {
             return `${indent}SizedBox(\n${nextIndent}width: ${Math.round(ast.properties.width)},\n${nextIndent}child: ${textWidget.trim()},\n${indent})`;
         }
-
         return textWidget;
     } else if (ast.widget === 'SvgPicture') {
-        let svgSafe = (ast.properties.svg || '').replace(/'/g, "\\'").replace(/\n/g, '').replace(/\r/g, '');
-        let colorStr = '';
-        if (ast.properties.color) {
-            let rawHex = ast.properties.color.replace('#', '');
-            colorStr = `,\n${nextIndent}colorFilter: const ColorFilter.mode(Color(0xFF${rawHex}), BlendMode.srcIn)`;
+        let svgString = (ast.properties.svg || '');
+        
+        // 🧩 MODULARITY V4.26: Stable Direct Painting
+        // 1. Bersihkan atribut bawaan Figma yang sering bikin 'blink' atau transparan
+        svgString = svgString.replace(/width="[^"]*"/gi, '');
+        svgString = svgString.replace(/height="[^"]*"/gi, '');
+        svgString = svgString.replace(/stroke="[^"]*"/gi, ' ');
+        svgString = svgString.replace(/stroke-width="[^"]*"/gi, ' ');
+        svgString = svgString.replace(/fill="[^"]*"/gi, ' ');
+        svgString = svgString.replace(/overflow="[^"]*"/gi, ' ');
+
+        // 2. Tentukan Warna (Injeksi Langsung)
+        const hasStroke = !!(ast.properties.stroke && ast.properties.stroke.weight);
+        const prefColor = (hasStroke ? ast.properties.stroke.color : ast.properties.color) || '#000000';
+        const hexPaint = prefColor.startsWith('#') ? prefColor : `#${prefColor}`;
+        
+        // 3. Rakit atribut baru dengan Fill-Rule 'evenodd' (Standar Figma)
+        const weight = hasStroke ? Math.max(ast.properties.stroke.weight, 1.5) : 1.5;
+        let shapeAttrs = `stroke-linecap="round" stroke-linejoin="round" fill-rule="evenodd"`;
+        
+        if (hasStroke) {
+            shapeAttrs += ` stroke="${hexPaint}" stroke-width="${weight}" fill="none"`;
+        } else {
+            shapeAttrs += ` fill="${hexPaint}"`;
         }
-        return `${indent}// Vector ID: ${ast.name}\n${indent}SvgPicture.string(\n${nextIndent}'''${svgSafe}''',\n${nextIndent}width: ${Math.round(ast.properties.width)},\n${nextIndent}height: ${Math.round(ast.properties.height)}${colorStr}\n${indent})`;
+        
+        const shapeRegex = /<(path|line|rect|circle|ellipse|polygon|polyline)/gi;
+        svgString = svgString.replace(shapeRegex, (match: string) => `${match} ${shapeAttrs} `);
+
+        let svgSafe = svgString.replace(/'/g, "\\'").replace(/\n/g, '').replace(/\r/g, '');
+        
+        const wVal = Math.round(ast.properties.width);
+        const hVal = ast.properties.height <= 2.0 ? wVal : Math.round(ast.properties.height);
+
+        return `${indent}SvgPicture.string(\n${nextIndent}'''${svgSafe}''',\n${nextIndent}width: ${wVal}.0,\n${nextIndent}height: ${hVal}.0,\n${nextIndent}fit: BoxFit.contain\n${indent})`;
     } else if (ast.widget === 'Image') {
         return `${indent}Image.asset(\n${nextIndent}'assets/images/${ast.properties.imageName}.png',\n${nextIndent}width: ${Math.round(ast.properties.width)},\n${nextIndent}height: ${Math.round(ast.properties.height)},\n${nextIndent}fit: BoxFit.cover,\n${indent})`;
     } else if (ast.widget === 'TextField') {

@@ -1,4 +1,4 @@
-import { extractFills } from './utils';
+import { extractFills, extractStrokes } from './utils';
 
 export async function parseNode(node: SceneNode, parentX = 0, parentY = 0): Promise<any> {
     const nodeNameLower = node.name.toLowerCase();
@@ -44,6 +44,27 @@ export async function parseNode(node: SceneNode, parentX = 0, parentY = 0): Prom
 
     astNode.figmaNodeId = node.id;
     astNode.name = node.name;
+
+    // 🧩 MODULARITY V4.12: Component & Instance Detection
+    if (node.type === 'INSTANCE' && node.mainComponent) {
+        astNode.isInstance = true;
+        astNode.mainComponentId = node.mainComponent.id;
+        astNode.mainComponentName = node.mainComponent.name;
+        
+        // Extract Overrides (Teks & Warna)
+        const overrides: any = {};
+        const findOverrides = (n: any) => {
+            if (n.type === 'TEXT') {
+                overrides[n.name] = n.characters;
+            }
+            if (n.children) n.children.forEach(findOverrides);
+        };
+        node.children.forEach(findOverrides);
+        astNode.overrides = overrides;
+    } else if (node.type === 'COMPONENT') {
+        astNode.isComponentDefinition = true;
+        astNode.componentId = node.id;
+    }
 
     if ('reactions' in node) {
         let navDestinations: any[] = [];
@@ -137,20 +158,42 @@ export async function parseVectorShape(node: any): Promise<any> {
     try {
         const bytes = await node.exportAsync({ format: 'SVG' });
         svgString = String.fromCharCode.apply(null, Array.from(bytes));
+        console.log(`[Parser] SVG exported for "${node.name}":`, svgString.substring(0, 100) + '...');
     } catch (e) {
         console.error("Gagal mengekstrak SVG", e);
     }
+
+    const stroke = extractStrokes(node);
+    console.log(`[Parser] Node "${node.name}" stroke data:`, stroke);
+
+    // 🧩 MODULARITY V4.20: Precision Coordinate & Dimension Check
+    const abs = node.absoluteBoundingBox;
+    const parentAbs = node.parent && 'absoluteBoundingBox' in node.parent ? (node.parent as any).absoluteBoundingBox : abs;
+    
+    // Gunakan koordinat relatif yang murni jika absolute tersedia
+    let x = abs ? abs.x - (parentAbs ? parentAbs.x : 0) : node.x;
+    let y = abs ? abs.y - (parentAbs ? parentAbs.y : 0) : node.y;
+    let w = node.width || (abs ? abs.width : 10);
+    let h = node.height || (abs ? abs.height : 10);
+
+    // Proteksi: Jika Pencil Tool menghasilkan lebar/tinggi sangat kecil/nol
+    if (w < 1) w = abs ? Math.max(abs.width, 1.0) : 1.0;
+    if (h < 1) h = abs ? Math.max(abs.height, 1.0) : 1.0;
+
+    console.log(`[Parser] Detected Vector "${node.name}" at (${x}, ${y}) with size ${w}x${h}`);
 
     return {
         widget: 'SvgPicture',
         name: node.name,
         properties: {
-            width: node.width,
-            height: node.height,
-            x: node.x,
-            y: node.y,
+            name: node.name,
+            width: w,
+            height: h,
+            x: x,
+            y: y,
             svg: svgString,
-            color: extractFills(node.fills)
+            color: extractFills(node.fills),
+            stroke: stroke
         }
     };
 }

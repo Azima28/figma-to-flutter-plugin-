@@ -25,6 +25,18 @@ figma.ui.onmessage = async (msg) => {
 
         const nodeASTs = await Promise.all(selection.map(node => parseNode(node, -(node as any).x || 0, -(node as any).y || 0)));
 
+        // 🔍 DEBUG: Count vectors with strokes
+        let vectorCount = 0;
+        const countVectors = (nodes: any[]) => {
+            nodes.forEach(n => {
+                if (n.widget === 'SvgPicture' && n.properties.stroke) vectorCount++;
+                if (n.children) countVectors(n.children);
+            });
+        }
+        countVectors(nodeASTs);
+
+        figma.notify(`Generation Complete! Detected ${vectorCount} vector strokes. Check Console (Alt+P) for details.`);
+
         let logicNodes = msg.logicNodes || [];
         let logicEdges = msg.logicEdges || [];
         let projectName = msg.projectName || 'figma_flutter_app';
@@ -43,6 +55,51 @@ figma.ui.onmessage = async (msg) => {
         let colorConstants = Object.entries(colorPalette).map(([name, hex]) => {
             return `  static const Color ${name} = Color(${hex});`;
         }).join('\n');
+
+        // 🧩 MODULARITY V4.12: Shared Components Collection
+        const sharedComponents = new Map<string, any>();
+        const findComponents = (node: any) => {
+            if (node.isInstance && node.mainComponentId) {
+                if (!sharedComponents.has(node.mainComponentId)) {
+                    sharedComponents.set(node.mainComponentId, {
+                        id: node.mainComponentId,
+                        name: node.mainComponentName,
+                        ast: JSON.parse(JSON.stringify(node))
+                    });
+                }
+            }
+            if (node.children) node.children.forEach(findComponents);
+        };
+        nodeASTs.forEach(findComponents);
+
+        const componentFiles = Array.from(sharedComponents.values()).map(comp => {
+            const className = toPascalCase(comp.name);
+            const fileName = comp.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+            const path = `lib/components/${fileName}.dart`;
+            const componentCode = generateFlutterCode(comp.ast, 2, logicNodes, logicEdges, { width: comp.ast.properties.width, height: comp.ast.properties.height });
+            
+            const content = `import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class ${className} extends StatelessWidget {
+  final String? text;
+  final VoidCallback? onTap;
+
+  const ${className}({
+    super.key,
+    this.text,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ${componentCode.trim()};
+  }
+}
+`;
+            return { path, className, fileName, content };
+        });
 
         // 2. Generate Dart Code for Screens
         const screenClassSnippets: string[] = [];
@@ -190,20 +247,31 @@ figma.ui.onmessage = async (msg) => {
             let rawBg = (ast.properties.backgroundColor || '').replace('#', '');
             let scaffoldBg = rawBg ? `const Color(0xFF${rawBg})` : 'Colors.white';
 
-            const findDependencies = (node: any, deps: Set<string>) => {
+            const findDependencies = (node: any, deps: Set<string>, compDeps: Set<string>) => {
               if (node.properties && node.properties.figmaNavigations) {
                 node.properties.figmaNavigations.forEach((r: any) => {
                   if (r.originalName) deps.add(r.originalName);
                 });
               }
+              if (node.isInstance && node.mainComponentId) {
+                const comp = sharedComponents.get(node.mainComponentId);
+                if (comp) compDeps.add(comp.name.toLowerCase().replace(/[^a-z0-9]/g, '_'));
+              }
               if (node.children) {
-                node.children.forEach((c: any) => findDependencies(c, deps));
+                node.children.forEach((c: any) => findDependencies(c, deps, compDeps));
               }
             };
             
             const dependencies = new Set<string>();
-            findDependencies(ast, dependencies);
+            const compDependencies = new Set<string>();
+            findDependencies(ast, dependencies, compDependencies);
             
+            compDependencies.forEach(compFileName => {
+              const importPath = `import 'package:${projectName}/components/${compFileName}.dart';`;
+              globalImports.add(importPath);
+              currentScreenImports.add(importPath);
+            });
+
             dependencies.forEach(dest => {
               if (dest !== ast.name) {
                 const depMeta = finalScreenMetadata.find(m => m.ast.name === dest);
@@ -275,6 +343,10 @@ ${buildMethodContent}
             if (f.path !== 'lib/main.dart') {
                 modularMainImports.add(`import 'package:${projectName}/${f.path.replace('lib/', '').replace('.dart', '')}.dart';`);
             }
+        });
+
+        componentFiles.forEach(cf => {
+            modularMainImports.add(`import 'package:${projectName}/components/${cf.fileName}.dart';`);
         });
 
         const finalModularImports = Array.from(modularMainImports).join('\n');
@@ -360,8 +432,9 @@ ${routeMapEntries}
 `;
 
         const masterImportsHeader = Array.from(masterOnlyImports).join('\n');
+        const allComponentsContent = componentFiles.map(cf => cf.content).join('\n\n');
         const allScreensContent = screenClassSnippets.join('\n\n');
-        const dartCodeOutput = masterImportsHeader + '\n' + mainDartContent + '\n' + allScreensContent;
+        const dartCodeOutput = masterImportsHeader + '\n' + mainDartContent + '\n' + allComponentsContent + '\n\n' + allScreensContent;
         
         // 🧩 MODULAR ENTRY POINT (V4.5): main.dart yang bersih hanya dengan import + setup
         const modularMainDartContent = finalModularImports + '\n' + mainDartContent;
@@ -437,6 +510,11 @@ ${dartCodeOutput}`;
         finalFiles.push({ path: 'allcode.dart', content: allCodeContent });
         finalFiles.push({ path: '[Boilerplate] pubspec.yaml', content: pubspecContent });
         finalFiles.push({ path: 'lib/main.dart', content: modularMainDartContent });
+
+        // Tambahkan file component ke dalam daftar
+        componentFiles.forEach(cf => {
+            finalFiles.push({ path: cf.path, content: cf.content });
+        });
 
         // Tambahkan file screen lainnya ke dalam daftar (Filter lib/main.dart agar tidak dobel)
         mainFiles.forEach(f => {
