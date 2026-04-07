@@ -262,7 +262,8 @@ export async function parseFrameShape(node: any, parentX = 0, parentY = 0): Prom
             layoutGrow: node.layoutGrow || 0,
             cornerRadius: node.cornerRadius || 0,
             backgroundColor: extractFills(node.fills),
-            layoutMode: node.layoutMode || 'NONE' // 👈 Tambahkan info layout mode
+            stroke: extractStrokes(node),
+            layoutMode: node.layoutMode || 'NONE'
         },
         children: children
     };
@@ -311,6 +312,7 @@ export function parseRectangleShape(node: RectangleNode): any {
             y: node.y,
             cornerRadius: node.cornerRadius,
             color: typeof fills === 'string' ? fills : null,
+            stroke: extractStrokes(node),
             ...extraProps
         }
     };

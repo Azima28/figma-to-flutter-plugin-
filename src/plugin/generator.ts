@@ -154,10 +154,16 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
         let colorVal = (ast.properties.color || ast.properties.backgroundColor || '').replace('#', '');
         let radius = ast.properties.cornerRadius || 0;
 
-        if (radius > 0) {
+        if (radius > 0 || ast.properties.stroke) {
             let decoProps = [];
             if (colorVal) decoProps.push(`color: const Color(0xFF${colorVal})`);
-            decoProps.push(`borderRadius: BorderRadius.circular(${radius})`);
+            if (ast.properties.stroke) {
+                const s = ast.properties.stroke;
+                const sw = s.weight || 1.0;
+                const sc = (s.color || '000000').replace('#', '');
+                decoProps.push(`border: Border.all(color: const Color(0xFF${sc}), width: ${sw})`);
+            }
+            if (radius > 0) decoProps.push(`borderRadius: BorderRadius.circular(${radius})`);
             containerProps.push(`decoration: BoxDecoration(\n${nextIndent}  ${decoProps.join(`,\n${nextIndent}  `)},\n${nextIndent})`);
         } else if (colorVal) {
             containerProps.push(`color: const Color(0xFF${colorVal})`);
@@ -217,11 +223,11 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
                         // 🌐 Horizontal Liquid Positioning
                         if (hConst === 'MIN') {
                             positionProps.push(`left: ${c.properties.x}`);
-                            if (c.properties.width) positionProps.push(`width: ${Math.round(c.properties.width)}`);
+                            if (c.properties.width) positionProps.push(`width: ${parseFloat(c.properties.width.toFixed(2))}`);
                         }
                         else if (hConst === 'MAX') {
                             positionProps.push(`right: ${ast.properties.width - (c.properties.x + c.properties.width)}`);
-                            if (c.properties.width) positionProps.push(`width: ${Math.round(c.properties.width)}`);
+                            if (c.properties.width) positionProps.push(`width: ${parseFloat(c.properties.width.toFixed(2))}`);
                         }
                         else if (hConst === 'STRETCH') {
                           positionProps.push(`left: ${c.properties.x}`);
@@ -235,11 +241,11 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
                         // 🌐 Vertical Liquid Positioning
                         if (vConst === 'MIN') {
                             positionProps.push(`top: ${c.properties.y}`);
-                            if (c.properties.height && c.properties.height > 2) positionProps.push(`height: ${Math.round(c.properties.height)}`);
+                            if (c.properties.height && c.properties.height > 2) positionProps.push(`height: ${parseFloat(c.properties.height.toFixed(2))}`);
                         }
                         else if (vConst === 'MAX') {
                             positionProps.push(`bottom: ${ast.properties.height - (c.properties.y + c.properties.height)}`);
-                            if (c.properties.height && c.properties.height > 2) positionProps.push(`height: ${Math.round(c.properties.height)}`);
+                            if (c.properties.height && c.properties.height > 2) positionProps.push(`height: ${parseFloat(c.properties.height.toFixed(2))}`);
                         }
                         else if (vConst === 'STRETCH') {
                           positionProps.push(`top: ${c.properties.y}`);
@@ -316,7 +322,7 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
         let textWidget = `${indent}Text(\n${nextIndent}'${textStr}'${styleStr}${alignStr}\n${indent})`;
 
         if (ast.properties.textAutoResize !== 'WIDTH_AND_HEIGHT' && ast.properties.width) {
-            return `${indent}SizedBox(\n${nextIndent}width: ${Math.round(ast.properties.width)},\n${nextIndent}child: ${textWidget.trim()},\n${indent})`;
+            return `${indent}SizedBox(\n${nextIndent}width: ${parseFloat(ast.properties.width.toFixed(2))},\n${nextIndent}child: ${textWidget.trim()},\n${indent})`;
         }
         return textWidget;
     } else if (ast.widget === 'SvgPicture') {
@@ -351,12 +357,18 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
 
         let svgSafe = svgString.replace(/'/g, "\\'").replace(/\n/g, '').replace(/\r/g, '');
         
-        const wVal = Math.round(ast.properties.width);
-        const hVal = ast.properties.height <= 2.0 ? wVal : Math.round(ast.properties.height);
+        const wVal = parseFloat(ast.properties.width.toFixed(2));
+        const hVal = ast.properties.height <= 2.0 ? wVal : parseFloat(ast.properties.height.toFixed(2));
 
-        return `${indent}SvgPicture.string(\n${nextIndent}'''${svgSafe}''',\n${nextIndent}width: ${wVal}.0,\n${nextIndent}height: ${hVal}.0,\n${nextIndent}fit: BoxFit.contain\n${indent})`;
+        // 🧩 V4.50: Use per-screen SVG constant if pre-processed
+        if (ast.properties.svgRefName) {
+            const constName = '_kSvg' + ast.properties.svgRefName.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+            return `${indent}SvgPicture.string(\n${nextIndent}${constName},\n${nextIndent}width: ${wVal},\n${nextIndent}height: ${hVal},\n${nextIndent}fit: BoxFit.contain\n${indent})`;
+        }
+
+        return `${indent}SvgPicture.string(\n${nextIndent}'''${svgSafe}''',\n${nextIndent}width: ${wVal},\n${nextIndent}height: ${hVal},\n${nextIndent}fit: BoxFit.contain\n${indent})`;
     } else if (ast.widget === 'Image') {
-        return `${indent}Image.asset(\n${nextIndent}'assets/images/${ast.properties.imageName}.png',\n${nextIndent}width: ${Math.round(ast.properties.width)},\n${nextIndent}height: ${Math.round(ast.properties.height)},\n${nextIndent}fit: BoxFit.cover,\n${indent})`;
+        return `${indent}Image.asset(\n${nextIndent}'assets/images/${ast.properties.imageName}.png',\n${nextIndent}width: ${parseFloat(ast.properties.width.toFixed(2))},\n${nextIndent}height: ${parseFloat(ast.properties.height.toFixed(2))},\n${nextIndent}fit: BoxFit.cover,\n${indent})`;
     } else if (ast.widget === 'TextField') {
         const inputName = ast.name.substring(7);
         return `${indent}Padding(\n${nextIndent}padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),\n${nextIndent}child: TextFormField(\n${nextIndent}  controller: _${inputName}Controller,\n${nextIndent}  decoration: InputDecoration(\n${nextIndent}    labelText: '${inputName}',\n${nextIndent}    hintText: 'Ketuk untuk mengisi ${inputName}...',\n${nextIndent}    border: const OutlineInputBorder(),\n${nextIndent}  ),\n${nextIndent}),\n${indent})`;

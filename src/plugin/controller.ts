@@ -37,6 +37,45 @@ figma.ui.onmessage = async (msg) => {
 
         figma.notify(`Generation Complete! Detected ${vectorCount} vector strokes. Check Console (Alt+P) for details.`);
 
+        // 🧩 V4.50: Vector Registry — Collect all SVGs and assign reference names
+        const vectorRegistry: Map<string, { name: string, processedSvg: string }> = new Map();
+        let vectorIndex = 0;
+        const collectVectors = (node: any) => {
+            if (node.widget === 'SvgPicture' && node.properties.svg) {
+                // Generate unique name from layer name
+                const baseName = (node.name || `vector_${vectorIndex}`).toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+                const uniqueName = vectorRegistry.has(baseName) ? `${baseName}_${vectorIndex}` : baseName;
+                vectorIndex++;
+
+                // Process SVG (same logic as generator.ts but done once here)
+                let svgString = node.properties.svg || '';
+                svgString = svgString.replace(/width="[^"]*"/gi, ' ');
+                svgString = svgString.replace(/height="[^"]*"/gi, ' ');
+                svgString = svgString.replace(/stroke="[^"]*"/gi, ' ');
+                svgString = svgString.replace(/stroke-width="[^"]*"/gi, ' ');
+                svgString = svgString.replace(/fill="[^"]*"/gi, ' ');
+                svgString = svgString.replace(/overflow="[^"]*"/gi, ' ');
+
+                const hasStroke = !!(node.properties.stroke && node.properties.stroke.weight);
+                const prefColor = (hasStroke ? node.properties.stroke.color : node.properties.color) || '#000000';
+                const hexPaint = prefColor.startsWith('#') ? prefColor : `#${prefColor}`;
+                const weight = hasStroke ? Math.max(node.properties.stroke.weight, 1.5) : 1.5;
+                let shapeAttrs = `stroke-linecap="round" stroke-linejoin="round" fill-rule="evenodd"`;
+                if (hasStroke) {
+                    shapeAttrs += ` stroke="${hexPaint}" stroke-width="${weight}" fill="none"`;
+                } else {
+                    shapeAttrs += ` fill="${hexPaint}"`;
+                }
+                svgString = svgString.replace(/<(path|line|rect|circle|ellipse|polygon|polyline)/gi, (match: string) => `${match} ${shapeAttrs} `);
+                let svgSafe = svgString.replace(/'/g, "\\'").replace(/\n/g, '').replace(/\r/g, '');
+
+                vectorRegistry.set(uniqueName, { name: uniqueName, processedSvg: svgSafe });
+                node.properties.svgRefName = uniqueName; // Tag the AST node
+            }
+            if (node.children) node.children.forEach(collectVectors);
+        };
+        nodeASTs.forEach(collectVectors);
+
         let logicNodes = msg.logicNodes || [];
         let logicEdges = msg.logicEdges || [];
         let projectName = msg.projectName || 'figma_flutter_app';
@@ -304,7 +343,25 @@ ${bottomNavCode}
   }`;
             }
 
-            let classCode = `class ${className} extends StatefulWidget {
+            // 🧩 V4.50: Collect vectors used by THIS screen
+            const screenVectorNames: Set<string> = new Set();
+            const findScreenVectors = (node: any) => {
+                if (node.properties && node.properties.svgRefName) {
+                    screenVectorNames.add(node.properties.svgRefName);
+                }
+                if (node.children) node.children.forEach(findScreenVectors);
+            };
+            findScreenVectors(ast);
+
+            let screenVectorConstants = '';
+            screenVectorNames.forEach(name => {
+                const entry = vectorRegistry.get(name);
+                if (entry) {
+                    screenVectorConstants += `const String _kSvg${name.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join('')} = '''${entry.processedSvg}''';\n`;
+                }
+            });
+
+            let classCode = screenVectorConstants + `\nclass ${className} extends StatefulWidget {
   const ${className}({super.key});
 
   @override
@@ -431,6 +488,7 @@ ${routeMapEntries}
 }
 `;
 
+        // 🧩 V4.50: SVG vectors are now stored as asset files, not inline
         const masterImportsHeader = Array.from(masterOnlyImports).join('\n');
         const allComponentsContent = componentFiles.map(cf => cf.content).join('\n\n');
         const allScreensContent = screenClassSnippets.join('\n\n');
@@ -460,6 +518,7 @@ ${routeMapEntries}
         await processNodeASTs(nodeASTs, binaryAssets);
 
         let assetsEntry = '';
+
         if (binaryAssets.length > 0) {
             assetsEntry = `\n  assets:\n    - assets/images/`;
         }
@@ -509,7 +568,8 @@ ${dartCodeOutput}`;
         let finalFiles: { path: string, content: string }[] = [];
         finalFiles.push({ path: 'allcode.dart', content: allCodeContent });
         finalFiles.push({ path: '[Boilerplate] pubspec.yaml', content: pubspecContent });
-        finalFiles.push({ path: 'lib/main.dart', content: modularMainDartContent });
+        finalFiles.push({ path: 'lib/main.dart', content: dartCodeOutput });
+
 
         // Tambahkan file component ke dalam daftar
         componentFiles.forEach(cf => {
