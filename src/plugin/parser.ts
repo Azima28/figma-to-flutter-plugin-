@@ -278,11 +278,14 @@ export function parseTextShape(node: TextNode): any {
             x: node.x,
             y: node.y,
             width: node.width,
+            height: node.height,
             textAutoResize: node.textAutoResize,
             fontSize: node.fontSize,
             fontName: node.fontName,
             color: extractFills(node.fills),
-            textAlign: node.textAlignHorizontal
+            textAlign: node.textAlignHorizontal,
+            textAlignVertical: node.textAlignVertical,
+            constraints: node.constraints
         }
     };
 }
@@ -313,6 +316,7 @@ export function parseRectangleShape(node: RectangleNode): any {
             cornerRadius: node.cornerRadius,
             color: typeof fills === 'string' ? fills : null,
             stroke: extractStrokes(node),
+            constraints: node.constraints,
             ...extraProps
         }
     };

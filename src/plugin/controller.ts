@@ -113,9 +113,9 @@ figma.ui.onmessage = async (msg) => {
 
         const componentFiles = Array.from(sharedComponents.values()).map(comp => {
             const className = toPascalCase(comp.name);
-            const fileName = comp.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+            const fileName = comp.name.toLowerCase().replace(/^[^a-z0-9]+/, '').replace(/[^a-z0-9]/g, '_');
             const path = `lib/components/${fileName}.dart`;
-            const componentCode = generateFlutterCode(comp.ast, 2, logicNodes, logicEdges, { width: comp.ast.properties.width, height: comp.ast.properties.height });
+            const componentCode = generateFlutterCode(comp.ast, 2, logicNodes, logicEdges, { width: comp.ast.properties.width, height: comp.ast.properties.height }, { ignoreInstance: true });
             
             const content = `import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -159,6 +159,44 @@ class ${className} extends StatelessWidget {
         const strippedCounts: Record<string, number> = {};
         screenConfigs.forEach(cfg => {
             strippedCounts[cfg.strippedName] = (strippedCounts[cfg.strippedName] || 0) + 1;
+        });
+
+        // 🧩 V4.50: Persistent Navbar (Shell Routing) Extraction
+        const navVariants: { [screenName: string]: any } = {};
+        let tabTargets: string[] = [];
+        let hasPersistentNav = false;
+
+        nodeASTs.forEach(screenAST => {
+            if (screenAST.children) {
+                const navIndex = screenAST.children.findIndex((c: any) => c.name && c.name.toLowerCase().startsWith('>nav'));
+                if (navIndex !== -1) {
+                    hasPersistentNav = true;
+                    // 🧩 V4.50+: AUTO-TAB DETECTION
+                    // Every screen with a >nav layer is automatically a tab target
+                    if (!tabTargets.includes(screenAST.name)) {
+                        tabTargets.push(screenAST.name);
+                    }
+                    
+                    // Extract the nav AST from the screen
+                    const navAst = screenAST.children.splice(navIndex, 1)[0];
+                    navVariants[screenAST.name] = navAst;
+
+                    // Parse tab targets from the very first nav encountered if tabTargets is empty
+                    if (tabTargets.length === 0) {
+                        const findTargets = (node: any) => {
+                            if (node.properties && node.properties.figmaNavigations) {
+                                node.properties.figmaNavigations.forEach((n: any) => {
+                                    if (n.originalName && !tabTargets.includes(n.originalName)) {
+                                        tabTargets.push(n.originalName);
+                                    }
+                                });
+                            }
+                            if (node.children) node.children.forEach(findTargets);
+                        };
+                        findTargets(navAst);
+                    }
+                }
+            }
         });
 
         const finalScreenMetadata = screenConfigs.map(cfg => {
@@ -233,7 +271,7 @@ class ${className} extends StatelessWidget {
                 bottomNavCode = `      bottomNavigationBar: ${bottomNavCode.trim()},`;
             }
 
-            let widgetTreeCode = generateFlutterCode(mainBodyAST, 3, logicNodes, logicEdges, screenSize);
+            let widgetTreeCode = generateFlutterCode(mainBodyAST, 3, logicNodes, logicEdges, screenSize, { navTabTargets: tabTargets, isInsideWrapper: false });
 
             registeredClassNames.add(className);
 
@@ -322,6 +360,8 @@ class ${className} extends StatelessWidget {
               }
             });
 
+            const isTabTarget = tabTargets.findIndex(t => t.toLowerCase().trim() === ast.name.toLowerCase().trim()) !== -1;
+            
             let buildMethodContent = '';
             if (ast.name.toLowerCase().includes('overlay')) {
                 buildMethodContent = `  @override
@@ -329,6 +369,14 @@ class ${className} extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Center(child: ${bodyWidget}),
+    );
+  }`;
+            } else if (isTabTarget) {
+                buildMethodContent = `  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: ${scaffoldBg},
+      child: ${bodyWidget},
     );
   }`;
             } else {
@@ -408,12 +456,159 @@ ${buildMethodContent}
 
         const finalModularImports = Array.from(modularMainImports).join('\n');
 
+        // 🧩 V4.50: Generate MainWrapperScreen if Persistent Navbar exists
+        let mainWrapperCode = '';
+        if (hasPersistentNav && tabTargets.length > 0) {
+            const wrapperImports = Array.from(modularMainImports).join('\n');
+            let navVariantNodes: string[] = [];
+            let navX = 0;
+            let navY = 0;
+            
+            // Build the switchable variants array
+            finalScreenMetadata.forEach(meta => {
+                const screenAstName = meta.ast.name.toLowerCase().trim();
+                const targetIdx = tabTargets.findIndex(t => t.toLowerCase().trim() === screenAstName);
+                if (targetIdx !== -1) {
+                    const navAst = navVariants[screenAstName] || Object.values(navVariants)[0]; // Fallback if screen didn't have one
+                    
+                    if (navX === 0 && navY === 0) {
+                        navX = navAst.properties.x || 0;
+                        navY = navAst.properties.y || 0;
+                    }
+                    
+                    // Generate it with offset 0 and special genOptions
+                    const navFlutter = generateFlutterCode(navAst, 6, logicNodes, logicEdges, { width: 1440, height: 1024 }, { navTabTargets: tabTargets, ignoreInstance: true, isInsideWrapper: true });
+                    navVariantNodes[targetIdx] = navFlutter.trim();
+                }
+            });
 
-        const routeMapEntries = finalScreenMetadata.map((meta) => {
+            // Fill holes if any variant missing
+            for(let i=0; i<tabTargets.length; i++) {
+                if(!navVariantNodes[i]) navVariantNodes[i] = navVariantNodes.find(n => n) || 'const SizedBox()';
+            }
+
+            const screensList = tabTargets.map(t => {
+                const meta = finalScreenMetadata.find(m => m.ast.name === t);
+                return meta ? `const ${meta.className}()` : 'const SizedBox()';
+            }).join(', ');
+
+        // 🌐 PRECISION V4.61: Correct Hex Color Formatting
+        const fWidth = nodeASTs[0].properties.width || 1440;
+        const fHeight = nodeASTs[0].properties.height || 1024;
+        const designBg = nodeASTs[0].properties.backgroundColor || 'FFFFFF';
+        let designBgCode = 'Colors.white';
+        
+        if (typeof designBg === 'string') {
+            if (designBg.startsWith('Color')) {
+                designBgCode = `const ${designBg}`;
+            } else if (designBg.length === 6) {
+                designBgCode = `const Color(0xFF${designBg.toUpperCase()})`;
+            }
+        }
+
+        mainWrapperCode = `class MainWrapperScreen extends StatefulWidget {
+  const MainWrapperScreen({super.key});
+
+  @override
+  State<MainWrapperScreen> createState() => _MainWrapperScreenState();
+}
+
+class _MainWrapperScreenState extends State<MainWrapperScreen> {
+  int _currentIndex = 0;
+  bool _isInit = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_isInit) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args != null && args is int) {
+        _currentIndex = args;
+      }
+      _isInit = true;
+    }
+  }
+
+  void _onTabTapped(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Figma-derived Nav UI variants based on tab index
+    final List<Widget> _navVariants = [
+      ${navVariantNodes.join(',\n      ')}
+    ];
+
+    return Scaffold(
+      backgroundColor: ${designBgCode},
+      body: Stack(
+        children: [
+          // 📦 Layer 1: Centered Page Content
+          Center(
+            child: FittedBox(
+              alignment: Alignment.center,
+              fit: BoxFit.contain,
+              child: SizedBox(
+                width: ${fWidth},
+                height: ${fHeight},
+                child: IndexedStack(
+                  index: _currentIndex,
+                  children: [
+                    ${screensList}
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // 🛠️ Layer 2: Edge-Pinned Navigation Sidebar
+          Align(
+            alignment: Alignment.topLeft,
+            child: FittedBox(
+              alignment: Alignment.topLeft,
+              fit: BoxFit.contain,
+              child: SizedBox(
+                width: ${fWidth},
+                height: ${fHeight},
+                child: Stack(
+                  children: [
+                    Positioned(
+                      left: ${navX},
+                      top: ${navY},
+                      child: _navVariants[_currentIndex],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}`;
+            screenClassSnippets.push(mainWrapperCode);
+            mainFiles.push({
+                path: 'lib/screen/main_wrapper.dart',
+                content: wrapperImports + '\n\n' + mainWrapperCode
+            });
+            modularMainImports.add(`import 'package:${projectName}/screen/main_wrapper.dart';`);
+            registeredClassNames.add('MainWrapperScreen');
+        }
+
+        let routeMapEntries = finalScreenMetadata.map((meta) => {
             const { ast, className, routePath } = meta;
             if (!registeredClassNames.has(className)) return null;
-            return `        '/${routePath}': (context) => const ${className}(),`;
-        }).filter(r => r !== null).join('\n');
+            return `        '/${routePath}': (context) => ${className}(),`;
+        }).filter(r => r !== null);
+        
+        if (hasPersistentNav) {
+            routeMapEntries.push(`        '/main_wrapper': (context) => MainWrapperScreen(),`);
+        }
+        
+        const routeMapEntriesStr = routeMapEntries.join('\n');
 
         // 🎨 MASTER MODE: Hanya sertakan import inti (Material, Svg, Fonts)
         // Ditempatkan di baris paling atas untuk menghindari error sintaksis Dart.
@@ -424,7 +619,9 @@ ${buildMethodContent}
         masterOnlyImports.add("import 'package:google_fonts/google_fonts.dart';");
         masterOnlyImports.add("import 'package:window_manager/window_manager.dart';");
 
-        const initialRoutePath = finalScreenMetadata[0].routePath;
+        const firstScreenName = finalScreenMetadata[0].ast.name.toLowerCase().trim();
+        const isFirstScreenTabTarget = tabTargets.some(t => t.toLowerCase().trim() === firstScreenName);
+        const initialRoutePath = (hasPersistentNav && isFirstScreenTabTarget) ? 'main_wrapper' : finalScreenMetadata[0].routePath;
         const fWidth = nodeASTs[0].properties.width || 1440;
         const fHeight = nodeASTs[0].properties.height || 1024;
 
@@ -481,7 +678,7 @@ class MyApp extends StatelessWidget {
       ),
       initialRoute: '/${initialRoutePath}',
       routes: {
-${routeMapEntries}
+${routeMapEntriesStr}
       },
     );
   }
@@ -490,12 +687,13 @@ ${routeMapEntries}
 
         // 🧩 V4.50: SVG vectors are now stored as asset files, not inline
         const masterImportsHeader = Array.from(masterOnlyImports).join('\n');
-        const allComponentsContent = componentFiles.map(cf => cf.content).join('\n\n');
+        const allComponentsContent = componentFiles.map(cf => cf.content.split('\n').filter(line => !line.trim().startsWith('import ')).join('\n')).join('\n\n');
         const allScreensContent = screenClassSnippets.join('\n\n');
         const dartCodeOutput = masterImportsHeader + '\n' + mainDartContent + '\n' + allComponentsContent + '\n\n' + allScreensContent;
         
         // 🧩 MODULAR ENTRY POINT (V4.5): main.dart yang bersih hanya dengan import + setup
-        const modularMainDartContent = finalModularImports + '\n' + mainDartContent;
+        const finalModularImportsList = Array.from(modularMainImports).join('\n');
+        const modularMainDartContent = finalModularImportsList + '\n' + mainDartContent;
 
         // 4. pubspec.yaml & Assets (V4.11)
         let binaryAssets: { name: string, data: Uint8Array }[] = [];
@@ -568,7 +766,7 @@ ${dartCodeOutput}`;
         let finalFiles: { path: string, content: string }[] = [];
         finalFiles.push({ path: 'allcode.dart', content: allCodeContent });
         finalFiles.push({ path: '[Boilerplate] pubspec.yaml', content: pubspecContent });
-        finalFiles.push({ path: 'lib/main.dart', content: dartCodeOutput });
+        finalFiles.push({ path: 'lib/main.dart', content: modularMainDartContent });
 
 
         // Tambahkan file component ke dalam daftar

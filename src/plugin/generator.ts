@@ -29,9 +29,9 @@ export function buildActionComments(triggerNodeId: string, logicNodes: any[], lo
     return lines.join('\n');
 }
 
-export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = [], screenSize?: ScreenSize): string {
+export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = [], screenSize?: ScreenSize, genOptions?: { navTabTargets?: string[], ignoreInstance?: boolean, isInsideWrapper?: boolean }): string {
     // 🧩 MODULARITY V4.12: Shared Component Call Logic
-    if (ast.isInstance && ast.mainComponentId) {
+    if (ast.isInstance && ast.mainComponentId && !genOptions?.ignoreInstance) {
         const className = toPascalCase(ast.mainComponentName);
         const indent = '  '.repeat(indentLevel);
         const nextIndent = '  '.repeat(indentLevel + 1);
@@ -55,7 +55,7 @@ export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: a
         return `${indent}${className}(${overridesCode}${onTapCode}\n${indent})`;
     }
 
-    let coreCode = generateWidgetCore(ast, indentLevel, logicNodes, logicEdges, screenSize);
+    let coreCode = generateWidgetCore(ast, indentLevel, logicNodes, logicEdges, screenSize, genOptions);
 
     let isBtnPrefix = (ast.name || '').toLowerCase().startsWith('>btn_');
     let triggerName = isBtnPrefix ? ast.name.substring(5) : ast.name;
@@ -111,9 +111,31 @@ export function generateFlutterCode(ast: any, indentLevel: number, logicNodes: a
 
                     nativeNavCode += `${nextIndent}  showGeneralDialog(\n${nextIndent}    context: context,\n${nextIndent}    barrierDismissible: true,\n${nextIndent}    barrierLabel: 'Dismiss',\n${nextIndent}    barrierColor: ${hasBackground ? 'Colors.black54' : 'Colors.transparent'},\n${nextIndent}    pageBuilder: (context, anim1, anim2) => PopScope(\n${nextIndent}      canPop: true,\n${nextIndent}      child: GestureDetector(\n${nextIndent}        behavior: HitTestBehavior.opaque,\n${nextIndent}        onTap: () { if (${closeOutside}) Navigator.pop(context); },\n${nextIndent}        child: Material(\n${nextIndent}          color: Colors.transparent,\n${nextIndent}          child: Center(\n${nextIndent}            child: FittedBox(\n${nextIndent}              fit: BoxFit.contain,\n${nextIndent}              child: SizedBox(\n${nextIndent}                width: ${screenSize?.width ?? 1440},\n${nextIndent}                height: ${screenSize?.height ?? 1024},\n${nextIndent}                child: Stack(\n${nextIndent}                  fit: StackFit.expand,\n${nextIndent}                  children: [\n${nextIndent}                    Positioned(\n${nextIndent}                      left: ${isManual ? ((nav.triggerX || 0) + offset.x) : 0},\n${nextIndent}                      top: ${isManual ? ((nav.triggerY || 0) + offset.y) : 0},\n${nextIndent}                      child: GestureDetector(\n${nextIndent}                        behavior: HitTestBehavior.opaque,\n${nextIndent}                        onTap: () {}, // Stop propagation to background\n${nextIndent}                        child: const ${destClassName}(),\n${nextIndent}                      ),\n${nextIndent}                    ),\n${nextIndent}                  ],\n${nextIndent}                ),\n${nextIndent}              ),\n${nextIndent}            ),\n${nextIndent}          ),\n${nextIndent}        ),\n${nextIndent}      ),\n${nextIndent}    ),\n${nextIndent}  );\n`;
                 } else {
-                    nativeNavCode += `${nextIndent}  Navigator.pushNamed(context, '/${dest}');\n`;
+                    const targetIdx = genOptions?.navTabTargets ? genOptions.navTabTargets.findIndex(t => t.toLowerCase().trim() === nav.originalName?.toLowerCase().trim()) : -1;
+                    if (genOptions?.navTabTargets && targetIdx !== -1) {
+                        if (genOptions.isInsideWrapper) {
+                            nativeNavCode += `${nextIndent}  _onTabTapped(${targetIdx}); // Shell Route override\n`;
+                        } else {
+                            nativeNavCode += `${nextIndent}  Navigator.pushNamed(context, '/main_wrapper', arguments: ${targetIdx});\n`;
+                        }
+                    } else {
+                        nativeNavCode += `${nextIndent}  Navigator.pushNamed(context, '/${dest}');\n`;
+                    }
                 }
             });
+        }
+
+        if (!nativeNavCode && ast.name && ast.name.toLowerCase().startsWith('>btn_')) {
+            const btnName = ast.name.toLowerCase().replace('>btn_', '').trim();
+            const targetIdx = genOptions?.navTabTargets ? genOptions.navTabTargets.findIndex(t => t.toLowerCase().replace(/^(lib|screen|screens|page|pages)\//i, '').replace(/[^a-z0-9\/]/g, '_') === btnName || t.toLowerCase().endsWith(btnName)) : -1;
+            
+            if (targetIdx !== -1) {
+                if (genOptions?.isInsideWrapper) {
+                    nativeNavCode += `${nextIndent}  _onTabTapped(${targetIdx}); // Auto-linked by layer name\n`;
+                } else {
+                    nativeNavCode += `${nextIndent}  Navigator.pushNamed(context, '/main_wrapper', arguments: ${targetIdx}); // Auto-linked to shell\n`;
+                }
+            }
         }
 
         return `${indent}GestureDetector(
@@ -133,16 +155,17 @@ ${indent})`;
     return coreCode;
 }
 
-export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = [], screenSize?: ScreenSize): string {
+export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: any[] = [], logicEdges: any[] = [], screenSize?: ScreenSize, genOptions?: { navTabTargets?: string[], ignoreInstance?: boolean, isInsideWrapper?: boolean }): string {
     const indent = '  '.repeat(indentLevel);
     const nextIndent = '  '.repeat(indentLevel + 1);
 
-    if (ast.widget === 'Container' || ast.widget === 'Row' || ast.widget === 'Column' || ast.widget === 'Stack') {
+        if (ast.widget === 'Container' || ast.widget === 'Row' || ast.widget === 'Column' || ast.widget === 'Stack') {
         let layoutProps = [];
         let containerProps = [];
+        const isStack = ast.widget === 'Stack';
 
-        if (ast.properties.width && ast.widget !== 'Row' && ast.widget !== 'Column') containerProps.push(`width: ${ast.properties.width}`);
-        if (ast.properties.height && ast.widget !== 'Row' && ast.widget !== 'Column') containerProps.push(`height: ${ast.properties.height}`);
+        if (ast.properties.width && ast.widget !== 'Row' && ast.widget !== 'Column' && !isStack) containerProps.push(`width: ${ast.properties.width}`);
+        if (ast.properties.height && ast.widget !== 'Row' && ast.widget !== 'Column' && !isStack) containerProps.push(`height: ${ast.properties.height}`);
 
         if (ast.properties.mainAxisAlignment && (ast.widget === 'Row' || ast.widget === 'Column')) {
             layoutProps.push(`mainAxisAlignment: MainAxisAlignment.${ast.properties.mainAxisAlignment}`);
@@ -187,7 +210,7 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
 
             if (ast.name && ast.name.toLowerCase().startsWith('>list_')) {
                 const templateChild = ast.children[0];
-                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges, screenSize);
+                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges, screenSize, genOptions);
                 const listName = ast.name.replace('>list_', '');
                 
                 return `${indent}SizedBox(\n${nextIndent}height: ${ast.properties.height || 200},\n${nextIndent}child: ListView.builder(\n${nextIndent}  itemCount: _${listName}Data.length,\n${nextIndent}  itemBuilder: (context, index) {\n${nextIndent}    // TODO (Backend): Bind data dari _${listName}Data[index] di sini\n${nextIndent}    return ${itemCode.trim()};\n${nextIndent}  },\n${nextIndent}),\n${indent})`;
@@ -195,19 +218,19 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
 
             if (ast.name && ast.name.toLowerCase().startsWith('>grid_')) {
                 const templateChild = ast.children[0];
-                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges, screenSize);
+                const itemCode = generateFlutterCode(templateChild, indentLevel + 2, logicNodes, logicEdges, screenSize, genOptions);
                 const gridName = ast.name.replace('>grid_', '');
                 
                 return `${indent}SizedBox(\n${nextIndent}height: ${ast.properties.height || 400},\n${nextIndent}child: GridView.builder(\n${nextIndent}  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(\n${nextIndent}    crossAxisCount: 2,\n${nextIndent}    childAspectRatio: 1.0,\n${nextIndent}    crossAxisSpacing: 10,\n${nextIndent}    mainAxisSpacing: 10,\n${nextIndent}  ),\n${nextIndent}  itemCount: _${gridName}Data.length,\n${nextIndent}  itemBuilder: (context, index) {\n${nextIndent}    // TODO (Backend): Bind data dari _${gridName}Data[index] di sini\n${nextIndent}    return ${itemCode.trim()};\n${nextIndent}  },\n${nextIndent}),\n${indent})`;
             }
 
             if (ast.widget === 'Container' && ast.children.length === 1) {
-                let childContent = generateFlutterCode(ast.children[0], indentLevel + 1, logicNodes, logicEdges, screenSize);
+                let childContent = generateFlutterCode(ast.children[0], indentLevel + 1, logicNodes, logicEdges, screenSize, genOptions);
                 containerProps.push(`child: ${childContent.trim()}`);
             } else {
                 let childrenArr: string[] = [];
                 ast.children.forEach((c: any, index: number) => {
-                    let childCode = generateFlutterCode(c, indentLevel + 2, logicNodes, logicEdges, screenSize);
+                    let childCode = generateFlutterCode(c, indentLevel + 2, logicNodes, logicEdges, screenSize, genOptions);
                     
                     if (c.properties.layoutGrow === 1) {
                         childCode = `${nextIndent}Expanded(\n${nextIndent}  child: ${childCode.trim()},\n${nextIndent})`;
@@ -256,6 +279,12 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
                           wrappedChild = `Center(child: ${wrappedChild})`;
                         }
 
+                        // 🌐 PRECISION V4.61: Mandatory Positioning for Stacks
+                        if (positionProps.length === 0) {
+                            positionProps.push(`left: ${c.properties.x || 0}`);
+                            positionProps.push(`top: ${c.properties.y || 0}`);
+                        }
+
                         if (positionProps.length > 0) {
                           childrenArr.push(`${nextIndent}Positioned(\n${nextIndent}  ${positionProps.join(`,\n${nextIndent}  `)},\n${nextIndent}  child: ${wrappedChild},\n${nextIndent})`);
                         } else {
@@ -277,33 +306,29 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
             }
         }
 
-        let finalWidgetString = '';
-        if (ast.widget === 'Container' && !hasChildren) {
-            finalWidgetString = `${indent}Container(\n${nextIndent}${containerProps.join(`,\n${nextIndent}`)}\n${indent})`;
-        } else if (ast.widget === 'Container' && hasChildren && ast.children.length === 1) {
-            finalWidgetString = `${indent}Container(\n${nextIndent}${containerProps.join(`,\n${nextIndent}`)}\n${indent})`;
-        } else {
-            let actualWidget = ast.widget === 'Container' ? 'Stack' : ast.widget;
-            let layoutString = '';
-            if (layoutProps.length > 0) {
-                layoutString = `${actualWidget}(\n${nextIndent}${layoutProps.join(`,\n${nextIndent}`)}\n${indent})`;
-            } else {
-                layoutString = `${actualWidget}()`;
-            }
+        let finalWidget = `${ast.widget}(\n${nextIndent}${layoutProps.join(`,\n${nextIndent}`)}\n${indent})`;
 
-            if (containerProps.length > 0) {
-                containerProps.push(`child: ${layoutString.trim()}`);
-                finalWidgetString = `${indent}Container(\n${nextIndent}${containerProps.join(`,\n${nextIndent}`)}\n${indent})`;
-            } else {
-                finalWidgetString = `${indent}${layoutString}`;
-            }
+        if (containerProps.length > 0) {
+            const actualWidget = ast.widget === 'Container' ? 'Stack' : ast.widget;
+            let innerWidget = `${nextIndent}${actualWidget}(\n${nextIndent}  ${layoutProps.join(`,\n${nextIndent}  `)}\n${nextIndent})`;
+            return `${indent}Container(\n${nextIndent}${containerProps.join(`,\n${nextIndent}`)}, \n${nextIndent}child: ${innerWidget.trim()}\n${indent})`;
         }
-        return finalWidgetString;
+
+        // 🎯 PRECISION V4.63: Always provide size to Stack to prevent 0x0 hit-test errors
+        if (isStack && ast.properties.width && ast.properties.height) {
+            return `${indent}SizedBox(\n${nextIndent}width: ${parseFloat(ast.properties.width.toFixed(2))},\n${nextIndent}height: ${parseFloat(ast.properties.height.toFixed(2))},\n${nextIndent}child: ${finalWidget.trim()}\n${indent})`;
+        }
+
+        return `${indent}${finalWidget}`;
 
     } else if (ast.widget === 'Text') {
-        let textStr = (ast.properties.text || '').replace(/\n/g, '\\n').replace(/'/g, "\\'");
-        let styleProps = [];
+        const textStr = (ast.properties.text || '').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+        let styleProps: string[] = [];
         if (ast.properties.fontSize) styleProps.push(`fontSize: ${ast.properties.fontSize}`);
+        if (ast.properties.fontName) {
+            const family = ast.properties.fontName.family || 'Inter';
+            styleProps.push(`fontFamily: GoogleFonts.${family.toLowerCase().replace(/\s/g, '')}().fontFamily`);
+        }
         if (ast.properties.color) {
             let rawHex = ast.properties.color.replace('#', '');
             styleProps.push(`color: const Color(0xFF${rawHex})`);
@@ -311,20 +336,36 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
 
         let styleStr = '';
         if (styleProps.length > 0) {
-            styleStr = `,\n${nextIndent}style: const TextStyle(\n${nextIndent}  ${styleProps.join(`,\n${nextIndent}  `)}\n${nextIndent})`;
+            styleStr = `,\n${nextIndent}style: TextStyle(\n${nextIndent}  ${styleProps.join(`,\n${nextIndent}  `)}\n${nextIndent})`;
         }
 
         let alignStr = '';
-        if (ast.properties.textAlign === 'CENTER') alignStr = `,\n${nextIndent}textAlign: TextAlign.center`;
-        else if (ast.properties.textAlign === 'RIGHT') alignStr = `,\n${nextIndent}textAlign: TextAlign.right`;
-        else if (ast.properties.textAlign === 'JUSTIFIED') alignStr = `,\n${nextIndent}textAlign: TextAlign.justify`;
+        if (ast.properties.textAlign === 'CENTER') alignStr = `,\n${nextIndent}  textAlign: TextAlign.center`;
+        else if (ast.properties.textAlign === 'RIGHT') alignStr = `,\n${nextIndent}  textAlign: TextAlign.right`;
+        else if (ast.properties.textAlign === 'JUSTIFIED') alignStr = `,\n${nextIndent}  textAlign: TextAlign.justify`;
 
-        let textWidget = `${indent}Text(\n${nextIndent}'${textStr}'${styleStr}${alignStr}\n${indent})`;
+        let textWidget = `Text(\n${nextIndent}  '${textStr}'${styleStr}${alignStr}\n${nextIndent})`;
+
+        // 🎯 PRECISION V4.61: Robust Alignment Mapping
+        const hAlign = ast.properties.textAlign || 'LEFT';
+        const vAlign = ast.properties.textAlignVertical || 'TOP';
+        
+        let alignment = 'Alignment.topLeft';
+        if (hAlign === 'CENTER' && vAlign === 'CENTER') alignment = 'Alignment.center';
+        else if (hAlign === 'CENTER' && vAlign === 'TOP') alignment = 'Alignment.topCenter';
+        else if (hAlign === 'CENTER' && vAlign === 'BOTTOM') alignment = 'Alignment.bottomCenter';
+        else if (hAlign === 'LEFT' && vAlign === 'CENTER') alignment = 'Alignment.centerLeft';
+        else if (hAlign === 'LEFT' && vAlign === 'BOTTOM') alignment = 'Alignment.bottomLeft';
+        else if (hAlign === 'RIGHT' && vAlign === 'CENTER') alignment = 'Alignment.centerRight';
+        else if (hAlign === 'RIGHT' && vAlign === 'TOP') alignment = 'Alignment.topRight';
+        else if (hAlign === 'RIGHT' && vAlign === 'BOTTOM') alignment = 'Alignment.bottomRight';
+
+        textWidget = `Align(\n${nextIndent}alignment: ${alignment},\n${nextIndent}child: ${textWidget},\n${indent})`;
 
         if (ast.properties.textAutoResize !== 'WIDTH_AND_HEIGHT' && ast.properties.width) {
-            return `${indent}SizedBox(\n${nextIndent}width: ${parseFloat(ast.properties.width.toFixed(2))},\n${nextIndent}child: ${textWidget.trim()},\n${indent})`;
+            return `${indent}SizedBox(\n${nextIndent}width: ${parseFloat(ast.properties.width.toFixed(2))},\n${nextIndent}height: ${parseFloat((ast.properties.height || 0).toFixed(2))},\n${nextIndent}child: ${textWidget.trim()},\n${indent})`;
         }
-        return textWidget;
+        return `${indent}${textWidget}`;
     } else if (ast.widget === 'SvgPicture') {
         let svgString = (ast.properties.svg || '');
         
