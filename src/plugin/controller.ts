@@ -282,6 +282,10 @@ class ${className} extends StatelessWidget {
             if (appBarAST) effectiveFrameHeight -= 60;
             if (bottomNavAST) effectiveFrameHeight -= 60;
 
+            let rawBg = (ast.properties.backgroundColor || '').replace('#', '');
+            let scaffoldBg = rawBg ? `const Color(0xFF${rawBg})` : 'Colors.white';
+            const isTabTarget = tabTargets.findIndex(t => t.toLowerCase().trim() === ast.name.toLowerCase().trim()) !== -1;
+
             let bodyWidget = widgetTreeCode.trim();
             if (shouldScroll) {
                 bodyWidget = `SingleChildScrollView(
@@ -307,11 +311,19 @@ class ${className} extends StatelessWidget {
             child: ${bodyWidget}
           ),
         )`;
+            } else if (isTabTarget && hasPersistentNav) {
+                // Tab targets inside MainWrapperScreen: keep SizedBox for Stack sizing, no FittedBox
+                bodyWidget = `SizedBox(
+          width: ${frameWidth},
+          height: ${effectiveFrameHeight},
+          child: ${bodyWidget}
+        )`;
             } else {
-                bodyWidget = `Center(
+                bodyWidget = `SizedBox.expand(
           child: FittedBox(
-            alignment: Alignment.center,
-            fit: BoxFit.contain,
+            alignment: Alignment.topLeft,
+            fit: BoxFit.fitWidth,
+            clipBehavior: Clip.hardEdge,
             child: SizedBox(
               width: ${frameWidth},
               height: ${effectiveFrameHeight},
@@ -321,8 +333,7 @@ class ${className} extends StatelessWidget {
         )`;
             }
 
-            let rawBg = (ast.properties.backgroundColor || '').replace('#', '');
-            let scaffoldBg = rawBg ? `const Color(0xFF${rawBg})` : 'Colors.white';
+            // scaffoldBg and isTabTarget already declared above
 
             const findDependencies = (node: any, deps: Set<string>, compDeps: Set<string>) => {
               if (node.properties && node.properties.figmaNavigations) {
@@ -360,7 +371,7 @@ class ${className} extends StatelessWidget {
               }
             });
 
-            const isTabTarget = tabTargets.findIndex(t => t.toLowerCase().trim() === ast.name.toLowerCase().trim()) !== -1;
+            // isTabTarget already declared above
             
             let buildMethodContent = '';
             if (ast.name.toLowerCase().includes('overlay')) {
@@ -374,10 +385,7 @@ class ${className} extends StatelessWidget {
             } else if (isTabTarget) {
                 buildMethodContent = `  @override
   Widget build(BuildContext context) {
-    return Container(
-      color: ${scaffoldBg},
-      child: ${bodyWidget},
-    );
+    return ${bodyWidget};
   }`;
             } else {
                 buildMethodContent = `  @override
@@ -506,7 +514,20 @@ ${buildMethodContent}
             }
         }
 
-        mainWrapperCode = `class MainWrapperScreen extends StatefulWidget {
+    // 🧩 DEDUPLICATION V4.65: Check if all nav variants are identical
+    const allIdentical = navVariantNodes.every(v => v === navVariantNodes[0]);
+    let navListDef = '';
+    if (allIdentical) {
+      navListDef = `// Opt: All navigation variants are identical
+    final Widget _commonNav = ${navVariantNodes[0]};
+    final List<Widget> _navVariants = List.filled(${tabTargets.length}, _commonNav);`;
+    } else {
+      navListDef = `final List<Widget> _navVariants = [
+      ${navVariantNodes.join(',\n      ')}
+    ];`;
+    }
+
+    mainWrapperCode = `class MainWrapperScreen extends StatefulWidget {
   const MainWrapperScreen({super.key});
 
   @override
@@ -538,53 +559,37 @@ class _MainWrapperScreenState extends State<MainWrapperScreen> {
   @override
   Widget build(BuildContext context) {
     // Figma-derived Nav UI variants based on tab index
-    final List<Widget> _navVariants = [
-      ${navVariantNodes.join(',\n      ')}
-    ];
+    ${navListDef}
 
     return Scaffold(
       backgroundColor: ${designBgCode},
-      body: Stack(
-        children: [
-          // 📦 Layer 1: Centered Page Content
-          Center(
-            child: FittedBox(
-              alignment: Alignment.center,
-              fit: BoxFit.contain,
-              child: SizedBox(
-                width: ${fWidth},
-                height: ${fHeight},
-                child: IndexedStack(
+      body: SizedBox.expand(
+        child: FittedBox(
+          alignment: Alignment.topLeft,
+          fit: BoxFit.fitWidth,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(
+            width: ${fWidth},
+            height: ${fHeight},
+            child: Stack(
+              children: [
+                // 📦 Layer 1: Page Content
+                IndexedStack(
                   index: _currentIndex,
                   children: [
                     ${screensList}
                   ],
                 ),
-              ),
-            ),
-          ),
-          // 🛠️ Layer 2: Edge-Pinned Navigation Sidebar
-          Align(
-            alignment: Alignment.topLeft,
-            child: FittedBox(
-              alignment: Alignment.topLeft,
-              fit: BoxFit.contain,
-              child: SizedBox(
-                width: ${fWidth},
-                height: ${fHeight},
-                child: Stack(
-                  children: [
-                    Positioned(
-                      left: ${navX},
-                      top: ${navY},
-                      child: _navVariants[_currentIndex],
-                    ),
-                  ],
+                // 🛠️ Layer 2: Navigation Sidebar
+                Positioned(
+                  left: ${navX},
+                  top: ${navY},
+                  child: _navVariants[_currentIndex],
                 ),
-              ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }

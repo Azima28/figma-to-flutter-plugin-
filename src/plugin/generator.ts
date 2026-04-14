@@ -412,7 +412,11 @@ export function generateWidgetCore(ast: any, indentLevel: number, logicNodes: an
         return `${indent}Image.asset(\n${nextIndent}'assets/images/${ast.properties.imageName}.png',\n${nextIndent}width: ${parseFloat(ast.properties.width.toFixed(2))},\n${nextIndent}height: ${parseFloat(ast.properties.height.toFixed(2))},\n${nextIndent}fit: BoxFit.cover,\n${indent})`;
     } else if (ast.widget === 'TextField') {
         const inputName = ast.name.substring(7);
-        return `${indent}Padding(\n${nextIndent}padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),\n${nextIndent}child: TextFormField(\n${nextIndent}  controller: _${inputName}Controller,\n${nextIndent}  decoration: InputDecoration(\n${nextIndent}    labelText: '${inputName}',\n${nextIndent}    hintText: 'Ketuk untuk mengisi ${inputName}...',\n${nextIndent}    border: const OutlineInputBorder(),\n${nextIndent}  ),\n${nextIndent}),\n${indent})`;
+        const radius = ast.properties.cornerRadius || 0;
+        const bgColor = ast.properties.color || ast.properties.backgroundColor || '00000000'; // Default transparent if empty
+        let fillCode = bgColor === '00000000' ? '' : `,\n${nextIndent}  filled: true,\n${nextIndent}  fillColor: const Color(0xFF${bgColor.replace('#', '')})`;
+
+        return `${indent}TextFormField(\n${nextIndent}  controller: _${inputName}Controller,\n${nextIndent}  decoration: InputDecoration(\n${nextIndent}    hintText: '${inputName}',\n${nextIndent}    border: OutlineInputBorder(\n${nextIndent}      borderRadius: BorderRadius.circular(${radius}),\n${nextIndent}    )${fillCode}\n${nextIndent}  ),\n${indent})`;
     } else if (ast.widget === 'Divider') {
         return `${indent}const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE))`;
     } else if (ast.widget === 'AppBar') {
